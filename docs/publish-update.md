@@ -32,13 +32,14 @@ npm run tauri signer sign -- scripts/sign-test.txt
 
 ## Publish procedure
 
-1. Bump all version files to `X.Y.Z`
-2. Commit and push to `main`
-3. `git tag vX.Y.Z`
-4. `git push origin vX.Y.Z`
-5. Wait for the **Release** workflow to complete
-6. Verify on GitHub → Releases:
-   - Tag `vX.Y.Z` exists
+1. Update [CHANGELOG.md](../CHANGELOG.md) for the new version
+2. Bump all version files to `X.Y.Z`
+3. Commit and push to `main`
+4. `git tag vX.Y.Z`
+5. `git push origin vX.Y.Z`
+6. Wait for the **Release** workflow to complete
+7. Verify on GitHub → Releases:
+   - Tag `vX.Y.Z` exists with release notes from CHANGELOG
    - Assets include `latest.json`, `.exe`, `.exe.sig`, `.msi`, `.msi.sig`
 
 ## Manual re-run
@@ -67,3 +68,14 @@ Signed local builds require `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the environm
 ## User experience
 
 Updates are **manual only**: Help → Check for updates. No auto-check on startup.
+
+## Documentation
+
+| Guide | Path |
+|-------|------|
+| Install (Windows) | [docs/install-windows.md](install-windows.md) |
+| User guide | [docs/user-guide.md](user-guide.md) |
+| Import | [docs/import-guide.md](import-guide.md) |
+| Backup & restore | [docs/backup-restore.md](backup-restore.md) |
+| Code signing | [docs/code-signing-windows.md](code-signing-windows.md) |
+| Release notes | [CHANGELOG.md](../CHANGELOG.md) |

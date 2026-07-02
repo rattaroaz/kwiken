@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { logger, formatDbError } from "@/lib/logger";
 import type {
   Account,
+  AccountRegister,
   AppInitStatus,
   Attachment,
   AutoCategorizeRule,
@@ -41,6 +42,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 
 export const db = {
   initApp: () => call<AppInitStatus>("init_app"),
+  markCleanShutdown: () => call<void>("mark_clean_shutdown_cmd"),
   getSchemaVersion: () => call<number>("get_schema_version"),
 
   listAccounts: (includeArchived = false) =>
@@ -80,6 +82,10 @@ export const db = {
 
   listTransactions: (filter: TransactionFilter = {}) =>
     call<Transaction[]>("list_transactions", { filter }),
+  countTransactions: (filter: TransactionFilter = {}) =>
+    call<number>("count_transactions", { filter }),
+  getAccountRegister: (accountId: string, filter: TransactionFilter = {}) =>
+    call<AccountRegister>("get_account_register", { accountId, filter }),
   getTransaction: (id: string) => call<Transaction>("get_transaction", { id }),
   createTransaction: (input: CreateTransaction) =>
     call<Transaction>("create_transaction", { input }),

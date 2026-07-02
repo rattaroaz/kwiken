@@ -3,11 +3,17 @@
 mod commands;
 mod db;
 mod models;
+mod parsers;
 mod state;
 
 use db::open_connection;
 use state::AppState;
 use tauri::Manager;
+
+fn init_logging() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
+    log::info!("Kwiken v{} starting", env!("CARGO_PKG_VERSION"));
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,12 +24,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            init_logging();
             let conn = open_connection(&app.handle())?;
+            log::info!("Database connection opened");
             app.manage(AppState::new(conn));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::init_app,
+            commands::mark_clean_shutdown_cmd,
             commands::get_schema_version,
             commands::list_accounts,
             commands::get_account,
@@ -41,6 +50,8 @@ pub fn run() {
             commands::update_payee,
             commands::delete_payee,
             commands::list_transactions,
+            commands::count_transactions,
+            commands::get_account_register,
             commands::get_transaction,
             commands::create_transaction,
             commands::update_transaction,

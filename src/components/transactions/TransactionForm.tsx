@@ -182,8 +182,9 @@ export default function TransactionForm({
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="mb-1 block text-sm font-medium">Date</label>
+            <label htmlFor="tx-date" className="mb-1 block text-sm font-medium">Date</label>
             <input
+              id="tx-date"
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
@@ -191,8 +192,9 @@ export default function TransactionForm({
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">Amount</label>
+            <label htmlFor="tx-amount" className="mb-1 block text-sm font-medium">Amount</label>
             <input
+              id="tx-amount"
               type="number"
               step="0.01"
               value={amount}
@@ -204,8 +206,9 @@ export default function TransactionForm({
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium">Payee</label>
+          <label htmlFor="tx-payee" className="mb-1 block text-sm font-medium">Payee</label>
           <input
+            id="tx-payee"
             type="text"
             value={payeeName}
             onChange={(e) => setPayeeName(e.target.value)}

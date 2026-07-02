@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { db } from "@/services/db";
 import { APP_NAME } from "@/lib/constants";
+import { logger } from "@/lib/logger";
 import { useSecurityStore, useUiStore } from "@/stores/index";
 
 export default function LockScreen() {
@@ -18,11 +19,14 @@ export default function LockScreen() {
       if (ok) {
         setLocked(false);
         setPassword("");
+        logger.security.info("App unlocked");
         addToast("success", "App unlocked");
       } else {
+        logger.security.warn("Unlock failed — incorrect password");
         addToast("error", "Incorrect password");
       }
     } catch (err) {
+      logger.security.error("Unlock failed", { error: String(err) });
       addToast("error", err instanceof Error ? err.message : "Unlock failed");
     } finally {
       setLoading(false);

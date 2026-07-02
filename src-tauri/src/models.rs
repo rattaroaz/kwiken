@@ -193,7 +193,7 @@ pub struct ExchangeRate {
     pub effective_date: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TransactionFilter {
     pub account_id: Option<String>,
     pub date_from: Option<String>,
@@ -204,6 +204,16 @@ pub struct TransactionFilter {
     pub amount_max: Option<f64>,
     pub memo: Option<String>,
     pub cleared: Option<bool>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountRegister {
+    pub account: Account,
+    pub transactions: Vec<Transaction>,
+    pub total_count: i64,
+    pub saved_filters: Vec<SavedFilter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,4 +283,6 @@ pub struct AppInitStatus {
     pub db_ready: bool,
     pub has_accounts: bool,
     pub schema_version: i32,
+    pub db_corrupt: bool,
+    pub unclean_shutdown: bool,
 }

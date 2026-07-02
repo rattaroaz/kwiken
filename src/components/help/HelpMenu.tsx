@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { APP_VERSION } from "@/lib/constants";
+import { openDoc, openDocsIndex } from "@/lib/docs";
 import { checkForUpdatesAndApply } from "@/services/updateService";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +50,28 @@ export default function HelpMenu({ collapsed = false }: HelpMenuProps) {
             className="block w-full px-4 py-2 text-left text-sm hover:bg-muted"
           >
             Check for updates
+          </button>
+          <button
+            type="button"
+            data-testid="menu-documentation"
+            onClick={() => {
+              setOpen(false);
+              void openDocsIndex();
+            }}
+            className="block w-full px-4 py-2 text-left text-sm hover:bg-muted"
+          >
+            Documentation
+          </button>
+          <button
+            type="button"
+            data-testid="menu-user-guide"
+            onClick={() => {
+              setOpen(false);
+              void openDoc("user-guide.md");
+            }}
+            className="block w-full border-t border-border px-4 py-2 text-left text-sm hover:bg-muted"
+          >
+            User guide
           </button>
           <div
             data-testid="menu-help-version"

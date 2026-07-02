@@ -15,12 +15,31 @@ export interface LogEntry {
 
 const SENSITIVE_KEYS = ["password", "token", "secret", "key", "hash"];
 
-function sanitize(metadata?: Record<string, unknown>): Record<string, unknown> | undefined {
+const LEVEL_RANK: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
+export function getMinLogLevel(): LogLevel {
+  const env = import.meta.env.VITE_LOG_LEVEL as string | undefined;
+  if (env && env in LEVEL_RANK) return env as LogLevel;
+  return import.meta.env.DEV ? "debug" : "info";
+}
+
+export function shouldLog(level: LogLevel, minLevel: LogLevel = getMinLogLevel()): boolean {
+  return LEVEL_RANK[level] >= LEVEL_RANK[minLevel];
+}
+
+export function sanitizeMetadata(metadata?: Record<string, unknown>): Record<string, unknown> | undefined {
   if (!metadata) return undefined;
   const clean: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(metadata)) {
     if (SENSITIVE_KEYS.some((s) => k.toLowerCase().includes(s))) {
       clean[k] = "[REDACTED]";
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      clean[k] = sanitizeMetadata(v as Record<string, unknown>);
     } else {
       clean[k] = v;
     }
@@ -29,13 +48,15 @@ function sanitize(metadata?: Record<string, unknown>): Record<string, unknown> |
 }
 
 function log(category: LogCategory, level: LogLevel, message: string, metadata?: Record<string, unknown>) {
+  if (!shouldLog(level)) return;
+
   const entry: LogEntry = {
     id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     category,
     level,
     message,
-    metadata: sanitize(metadata),
+    metadata: sanitizeMetadata(metadata),
   };
 
   useLogStore.getState().addEntry(entry);
@@ -72,6 +93,7 @@ export const logger = {
   },
   import: {
     info: (msg: string, meta?: Record<string, unknown>) => log("import", "info", msg, meta),
+    warn: (msg: string, meta?: Record<string, unknown>) => log("import", "warn", msg, meta),
     error: (msg: string, meta?: Record<string, unknown>) => log("import", "error", msg, meta),
   },
   update: {

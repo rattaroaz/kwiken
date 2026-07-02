@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { db } from "@/services/db";
 import { logger } from "@/lib/logger";
@@ -11,6 +11,7 @@ import AppShell from "@/components/layout/AppShell";
 import ToastContainer from "@/components/common/ToastContainer";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import LockScreen from "@/components/security/LockScreen";
+import DatabaseErrorScreen from "@/components/common/DatabaseErrorScreen";
 import SetupWizard from "@/pages/SetupWizard";
 import DashboardPage from "@/pages/DashboardPage";
 import AccountsPage from "@/pages/AccountsPage";
@@ -43,6 +44,8 @@ export default function App() {
   const setLocked = useSecurityStore((s) => s.setLocked);
   const setPrivacyMode = useSecurityStore((s) => s.setPrivacyMode);
   const isLocked = useSecurityStore((s) => s.isLocked);
+  const [dbCorrupt, setDbCorrupt] = useState(false);
+  const [uncleanShutdown, setUncleanShutdown] = useState(false);
 
   useAutoBackup();
   useIdleLock();
@@ -50,11 +53,31 @@ export default function App() {
   useEffect(() => {
     async function init() {
       if (import.meta.env.VITE_E2E === "true") {
-        setInitialized(true, true);
+        const forceSetup = sessionStorage.getItem("e2e-force-setup") === "1";
+        if (forceSetup) {
+          setInitialized(true, false);
+          return;
+        }
+        const status = await db.initApp();
+        const settings = await db.getAllSettings();
+        setSettings({ ...DEFAULT_SETTINGS, ...settings });
+        setTheme((settings.theme ?? "system") as Theme);
+        applyTheme((settings.theme ?? "system") as Theme);
+        setInitialized(true, status.has_accounts);
         return;
       }
       try {
         const status = await db.initApp();
+        if (status.db_corrupt) {
+          logger.app.error("Database integrity check failed", { schemaVersion: status.schema_version });
+          setDbCorrupt(true);
+          setInitialized(true, false);
+          return;
+        }
+        if (status.unclean_shutdown) {
+          logger.app.warn("Unclean shutdown detected from previous session");
+          setUncleanShutdown(true);
+        }
         const settings = await db.getAllSettings();
         const merged = { ...DEFAULT_SETTINGS, ...settings };
         setSettings(merged);
@@ -92,12 +115,36 @@ export default function App() {
     return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
+  useEffect(() => {
+    if (import.meta.env.VITE_E2E === "true") return;
+    const markClean = () => {
+      db.markCleanShutdown().catch(() => {});
+    };
+    window.addEventListener("beforeunload", markClean);
+    return () => {
+      markClean();
+      window.removeEventListener("beforeunload", markClean);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (uncleanShutdown) {
+      logger.app.info("Displayed unclean shutdown recovery notice");
+      addToast("info", "Kwiken recovered from an unexpected shutdown. Recent data should be intact.");
+      setUncleanShutdown(false);
+    }
+  }, [uncleanShutdown, addToast]);
+
   if (!initialized) {
     return (
       <div className="flex h-full items-center justify-center p-8">
         <LoadingSkeleton rows={3} className="w-64" />
       </div>
     );
+  }
+
+  if (dbCorrupt) {
+    return <DatabaseErrorScreen />;
   }
 
   if (!hasAccounts) {

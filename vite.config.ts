@@ -14,6 +14,7 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
       ...(isE2E
         ? {
+            "@tauri-apps/api/core": path.resolve(__dirname, "./e2e/mocks/tauriCore.ts"),
             "@tauri-apps/plugin-updater": path.resolve(__dirname, "./e2e/mocks/tauriUpdater.ts"),
             "@tauri-apps/plugin-process": path.resolve(__dirname, "./e2e/mocks/tauriProcess.ts"),
           }

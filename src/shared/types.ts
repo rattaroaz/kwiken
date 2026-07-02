@@ -182,6 +182,15 @@ export interface TransactionFilter {
   amount_max?: number;
   memo?: string;
   cleared?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AccountRegister {
+  account: Account;
+  transactions: Transaction[];
+  total_count: number;
+  saved_filters: SavedFilter[];
 }
 
 export interface ReconciliationSession {
@@ -242,6 +251,8 @@ export interface AppInitStatus {
   db_ready: boolean;
   has_accounts: boolean;
   schema_version: number;
+  db_corrupt: boolean;
+  unclean_shutdown: boolean;
 }
 
 export type Theme = "light" | "dark" | "system";

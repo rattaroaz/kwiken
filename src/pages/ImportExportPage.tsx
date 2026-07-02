@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { db } from "@/services/db";
 import { downloadTextFile } from "@/lib/utils";
+import { logger } from "@/lib/logger";
 import { useUiStore } from "@/stores/index";
 import type { Account, ImportPreview } from "@/shared/types";
 
@@ -51,8 +52,15 @@ export default function ImportExportPage() {
       else prev = await db.previewOfxImport(content, importAccount);
 
       setPreview(prev);
+      logger.import.info("Import preview ready", {
+        format,
+        accountId: importAccount,
+        totalRows: prev.total_rows,
+        duplicates: prev.duplicate_count,
+      });
       addToast("info", `Found ${prev.total_rows} rows (${prev.duplicate_count} duplicates)`);
     } catch (e) {
+      logger.import.error("Import preview failed", { format, error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Import preview failed");
     }
   };
@@ -71,9 +79,11 @@ export default function ImportExportPage() {
         count = await db.commitOfxImport(fileContent, importAccount);
       }
       addToast("success", `Imported ${count} transactions`);
+      logger.import.info("Import committed", { format, accountId: importAccount, count });
       setPreview(null);
       setFileContent("");
     } catch (e) {
+      logger.import.error("Import commit failed", { format, error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Import failed");
     } finally {
       setImporting(false);
@@ -95,8 +105,10 @@ export default function ImportExportPage() {
         filename = "kwiken-categories.csv";
       }
       downloadTextFile(content, filename);
+      logger.import.info("Data exported", { type, filename });
       addToast("success", "Export downloaded");
     } catch (e) {
+      logger.import.error("Export failed", { type, error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Export failed");
     }
   };
@@ -109,8 +121,10 @@ export default function ImportExportPage() {
       });
       if (!dest) return;
       await db.backupDatabase(dest);
+      logger.import.info("Database backup created", { dest });
       addToast("success", "Backup created");
     } catch (e) {
+      logger.import.error("Backup failed", { error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Backup failed");
     }
   };
@@ -124,8 +138,10 @@ export default function ImportExportPage() {
         });
         if (!src) return;
         await db.restoreDatabase(src as string);
+        logger.import.warn("Database restored from backup", { src });
         addToast("success", "Database restored. Please restart the app.");
       } catch (e) {
+        logger.import.error("Restore failed", { error: String(e) });
         addToast("error", e instanceof Error ? e.message : "Restore failed");
       }
     });

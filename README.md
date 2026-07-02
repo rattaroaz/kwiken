@@ -73,9 +73,31 @@ SQLite database is stored in the OS app data directory (`kwiken.db`). Schema mig
 
 Manual check only: **Help → Check for updates**. See [docs/publish-update.md](docs/publish-update.md) for release workflow.
 
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [docs/user-guide.md](docs/user-guide.md) | Getting started, accounts, transactions, reports |
+| [docs/install-windows.md](docs/install-windows.md) | Install, update, uninstall on Windows |
+| [docs/import-guide.md](docs/import-guide.md) | CSV, QIF, OFX import |
+| [docs/backup-restore.md](docs/backup-restore.md) | Database backup and restore |
+| [docs/publish-update.md](docs/publish-update.md) | Maintainer release procedure |
+| [docs/code-signing-windows.md](docs/code-signing-windows.md) | Windows Authenticode signing |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+In the app: **Help → Documentation**.
+
+## Icons
+
+Source icon: `assets/app-icon.png` (1024×1024). Regenerate all sizes:
+
+```bash
+npm run tauri icon assets/app-icon.png
+```
+
 ## Version
 
-Current version: **0.1.2** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
+Current version: **2.0.0** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
 
 ## License
 

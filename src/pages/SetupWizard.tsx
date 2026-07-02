@@ -40,7 +40,7 @@ export default function SetupWizard() {
   };
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-background p-6">
+    <div className="flex min-h-full items-center justify-center bg-background p-6" data-testid="setup-wizard">
       <div className="w-full max-w-lg rounded-xl border border-border bg-card p-8 shadow-lg">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-card-foreground">Welcome to Kwiken</h1>

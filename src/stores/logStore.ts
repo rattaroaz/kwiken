@@ -30,14 +30,24 @@ export const useLogStore = create<LogState>((set) => ({
   setLevelFilter: (levelFilter) => set({ levelFilter }),
 }));
 
+export function countLogErrors(entries: LogEntry[]): number {
+  return entries.filter((e) => e.level === "error").length;
+}
+
 export function getFilteredLogs(
   entries: LogEntry[],
   levelFilter: LogLevelFilter,
   categoryFilter: LogCategory | "all" = "all",
+  searchQuery = "",
 ): LogEntry[] {
+  const q = searchQuery.trim().toLowerCase();
   return entries.filter((e) => {
     if (levelFilter !== "all" && e.level !== levelFilter) return false;
     if (categoryFilter !== "all" && e.category !== categoryFilter) return false;
+    if (q) {
+      const haystack = `${e.message} ${e.category} ${JSON.stringify(e.metadata ?? {})}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
     return true;
   });
 }

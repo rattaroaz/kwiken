@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import Modal from "@/components/common/Modal";
 import TransactionForm from "@/components/transactions/TransactionForm";
 import LoadingSkeleton from "@/components/common/LoadingSkeleton";
+import { useDebounce } from "@/hooks/useDebounce";
 import { db } from "@/services/db";
 import { formatCurrency, formatDate, todayIso } from "@/lib/utils";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
@@ -14,6 +15,8 @@ import type {
   Transaction,
   TransactionFilter,
 } from "@/shared/types";
+
+const PAGE_SIZE = 100;
 
 export default function AccountDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +32,10 @@ export default function AccountDetailPage() {
   const [allAccounts, setAllAccounts] = useState<Account[]>([]);
 
   const [filter, setFilter] = useState<TransactionFilter>({});
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const debouncedPayee = useDebounce(filter.payee ?? "", 300);
+  const debouncedMemo = useDebounce(filter.memo ?? "", 300);
   const [stmtDate, setStmtDate] = useState(todayIso());
   const [stmtBalance, setStmtBalance] = useState("");
   const [reconStatus, setReconStatus] = useState<ReconciliationSession | null>(null);
@@ -49,22 +56,32 @@ export default function AccountDetailPage() {
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const [acc, txs, filters, accounts] = await Promise.all([
-        db.getAccount(id),
-        db.listTransactions({ ...filter, account_id: id }),
-        db.listSavedFilters(),
+      const queryFilter: TransactionFilter = {
+        ...filter,
+        payee: debouncedPayee || undefined,
+        memo: debouncedMemo || undefined,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+      };
+      const [register, accounts] = await Promise.all([
+        db.getAccountRegister(id, queryFilter),
         db.listAccounts(),
       ]);
-      setAccount(acc);
-      setTransactions(txs);
-      setSavedFilters(filters.filter((f) => !f.account_id || f.account_id === id));
+      setAccount(register.account);
+      setTransactions(register.transactions);
+      setTotalCount(register.total_count);
+      setSavedFilters(register.saved_filters);
       setAllAccounts(accounts.filter((a) => a.id !== id));
     } catch (e) {
       addToast("error", e instanceof Error ? e.message : "Failed to load account");
     } finally {
       setLoading(false);
     }
-  }, [id, filter, addToast]);
+  }, [id, filter.date_from, filter.date_to, filter.cleared, debouncedPayee, debouncedMemo, page, addToast]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [filter.date_from, filter.date_to, filter.cleared, debouncedPayee, debouncedMemo]);
 
   useEffect(() => {
     load();
@@ -203,7 +220,7 @@ export default function AccountDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => { setEditingTx(null); setFormOpen(true); }} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground">
+          <button type="button" onClick={() => { setEditingTx(null); setFormOpen(true); }} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground" data-testid="add-transaction">
             + Transaction
           </button>
           <button type="button" onClick={() => setTransferOpen(true)} className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted">
@@ -251,7 +268,7 @@ export default function AccountDetailPage() {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="overflow-x-auto rounded-lg border border-border" data-testid="transaction-register">
         <table className="w-full text-sm">
           <thead className="border-b border-border bg-muted/50">
             <tr>
@@ -307,6 +324,32 @@ export default function AccountDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {totalCount > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-sm" data-testid="register-pagination">
+          <span className="text-muted-foreground">
+            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={page === 0}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded-md border border-border px-3 py-1 disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={(page + 1) * PAGE_SIZE >= totalCount}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded-md border border-border px-3 py-1 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
 
       <TransactionForm
         open={formOpen}

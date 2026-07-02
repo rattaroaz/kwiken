@@ -1,6 +1,6 @@
 [package]
 name = "kwiken"
-version = "0.1.2"
+version = "2.0.0"
 description = "Kwiken — personal finance manager"
 authors = ["Kwiken"]
 edition = "2021"
@@ -13,6 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+log = "0.4"
+env_logger = "0.11"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

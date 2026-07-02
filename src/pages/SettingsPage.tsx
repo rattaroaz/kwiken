@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import Modal from "@/components/common/Modal";
 import { APP_NAME, APP_VERSION, DEFAULT_SETTINGS } from "@/lib/constants";
+import { logger } from "@/lib/logger";
 import { db } from "@/services/db";
 import { checkForUpdatesAndApply } from "@/services/updateService";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
@@ -62,8 +63,10 @@ export default function SettingsPage() {
       setPwModal(false);
       setPassword("");
       setConfirmPw("");
+      logger.security.info("Master password set");
       addToast("success", "Master password set");
     } catch (e) {
+      logger.security.error("Failed to set master password", { error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Failed to set password");
     } finally {
       setSaving(false);
@@ -73,8 +76,10 @@ export default function SettingsPage() {
   const lockNow = async () => {
     try {
       await db.lockApp();
+      logger.security.info("App locked manually");
       setLocked(true);
     } catch (e) {
+      logger.security.error("Failed to lock app", { error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Failed to lock app");
     }
   };
@@ -153,7 +158,7 @@ export default function SettingsPage() {
         ))}
         {field("Theme", (
           <select
-            defaultValue={settings.theme ?? "system"}
+            value={settings.theme ?? "system"}
             onChange={(e) => saveSetting("theme", e.target.value)}
             className="w-full rounded-md border border-input px-3 py-2 text-sm"
           >

@@ -1,26 +1,14 @@
-import { useEffect, useState } from "react";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-} from "recharts";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { db } from "@/services/db";
 import { downloadTextFile, formatCurrency, printReport, todayIso } from "@/lib/utils";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
 import type { Account, BalancePoint, CategorySpending, MonthlyFlow, TaxSummaryRow } from "@/shared/types";
+import LoadingSkeleton from "@/components/common/LoadingSkeleton";
+import type { ReportTab } from "@/components/reports/ReportCharts";
 
-const COLORS = ["#2563eb", "#16a34a", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#be185d", "#65a30d"];
+const ReportCharts = lazy(() => import("@/components/reports/ReportCharts"));
 
-type Tab = "spending" | "income" | "cashflow" | "balance" | "networth" | "tax";
+type Tab = ReportTab;
 
 export default function ReportsPage() {
   const [tab, setTab] = useState<Tab>("spending");
@@ -171,98 +159,21 @@ export default function ReportsPage() {
       {loading ? (
         <div className="flex h-64 items-center justify-center text-muted-foreground">Loading…</div>
       ) : (
-        <div className="rounded-lg border border-border bg-card p-5">
-          {tab === "spending" && (
-            spending.length === 0 ? <p className="text-muted-foreground">No spending data</p> : (
-              <div className="grid gap-6 lg:grid-cols-2">
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie data={spending} dataKey="amount" nameKey="category_name" cx="50%" cy="50%" outerRadius={100} label>
-                      {spending.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip formatter={(v) => formatCurrency(Number(v), currency, privacyMode)} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <table className="w-full text-sm">
-                  <thead><tr className="border-b"><th className="py-2 text-left">Category</th><th className="py-2 text-right">Amount</th></tr></thead>
-                  <tbody>
-                    {spending.map((s) => (
-                      <tr key={s.category_id} className="border-b border-border">
-                        <td className="py-2">{s.category_name}</td>
-                        <td className="py-2 text-right">{formatCurrency(s.amount, currency, privacyMode)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )
-          )}
-
-          {tab === "income" && (
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={incomeExpense}>
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(v) => formatCurrency(Number(v), currency, privacyMode)} />
-                <Legend />
-                <Bar dataKey="income" fill="#16a34a" name="Income" />
-                <Bar dataKey="expenses" fill="#dc2626" name="Expenses" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-
-          {tab === "cashflow" && (
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={cashFlow}>
-                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(v) => formatCurrency(Number(v), currency, privacyMode)} />
-                <Legend />
-                <Bar dataKey="income" fill="#16a34a" name="Inflow" />
-                <Bar dataKey="expenses" fill="#dc2626" name="Outflow" />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-
-          {tab === "balance" && (
-            !selectedAccount ? <p className="text-muted-foreground">Select an account</p> : (
-              <ResponsiveContainer width="100%" height={350}>
-                <LineChart data={balanceHistory}>
-                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip formatter={(v) => formatCurrency(Number(v), currency, privacyMode)} />
-                  <Line type="monotone" dataKey="balance" stroke="#2563eb" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            )
-          )}
-
-          {tab === "networth" && (
-            <ResponsiveContainer width="100%" height={350}>
-              <LineChart data={netWorthHistory}>
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(v) => formatCurrency(Number(v), currency, privacyMode)} />
-                <Line type="monotone" dataKey="balance" stroke="#2563eb" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-
-          {tab === "tax" && (
-            taxSummary.length === 0 ? <p className="text-muted-foreground">No tax-related transactions</p> : (
-              <table className="w-full text-sm">
-                <thead><tr className="border-b"><th className="py-2 text-left">Category</th><th className="py-2 text-right">Amount</th></tr></thead>
-                <tbody>
-                  {taxSummary.map((s, i) => (
-                    <tr key={i} className="border-b border-border">
-                      <td className="py-2">{s.category_name}</td>
-                      <td className="py-2 text-right">{formatCurrency(s.amount, currency, privacyMode)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
-          )}
+        <div className="rounded-lg border border-border bg-card p-5" data-testid="reports-panel">
+          <Suspense fallback={<LoadingSkeleton rows={4} />}>
+            <ReportCharts
+              tab={tab}
+              currency={currency}
+              privacyMode={privacyMode}
+              spending={spending}
+              incomeExpense={incomeExpense}
+              cashFlow={cashFlow}
+              balanceHistory={balanceHistory}
+              netWorthHistory={netWorthHistory}
+              taxSummary={taxSummary}
+              selectedAccount={selectedAccount}
+            />
+          </Suspense>
         </div>
       )}
     </div>

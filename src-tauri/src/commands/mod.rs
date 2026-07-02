@@ -1,8 +1,10 @@
 use crate::db::{
-    account_balance, apply_auto_category, ensure_payee, new_id, now_iso, seed_default_categories,
+    account_balance, apply_auto_category, check_integrity, detect_unclean_shutdown,
+    ensure_payee, mark_clean_shutdown, new_id, now_iso, seed_default_categories,
     validate_file_path,
 };
 use crate::models::*;
+use crate::parsers::{parse_csv_content, parse_ofx_content, parse_qif_content};
 use crate::state::AppState;
 use chrono::{Datelike, Months, NaiveDate, Utc};
 use rusqlite::{params, Connection, Row};
@@ -352,6 +354,8 @@ fn create_transaction_internal(
 #[tauri::command]
 pub fn init_app(state: State<AppState>) -> Result<AppInitStatus, String> {
     let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let db_corrupt = !check_integrity(&conn);
+    let unclean_shutdown = detect_unclean_shutdown(&conn)?;
     seed_default_categories(&conn)?;
     let has_accounts: bool = conn
         .query_row(
@@ -364,11 +368,28 @@ pub fn init_app(state: State<AppState>) -> Result<AppInitStatus, String> {
     let schema_version: i32 = conn
         .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
         .map_err(db_err)?;
+    if db_corrupt {
+        log::error!("Database integrity check failed (schema v{schema_version})");
+    } else if unclean_shutdown {
+        log::warn!("Unclean shutdown detected from previous session");
+    } else {
+        log::info!(
+            "App initialized: has_accounts={has_accounts}, schema_version={schema_version}"
+        );
+    }
     Ok(AppInitStatus {
-        db_ready: true,
+        db_ready: !db_corrupt,
         has_accounts,
         schema_version,
+        db_corrupt,
+        unclean_shutdown,
     })
+}
+
+#[tauri::command]
+pub fn mark_clean_shutdown_cmd(state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    mark_clean_shutdown(&conn)
 }
 
 #[tauri::command]
@@ -731,66 +752,128 @@ pub fn delete_payee(state: State<AppState>, id: String) -> Result<(), String> {
 
 // ── TRANSACTIONS ──────────────────────────────────────────────────────────────
 
-#[tauri::command]
-pub fn list_transactions(
-    state: State<AppState>,
+struct TxFilterParts {
+    where_clause: String,
+    params: Vec<Box<dyn rusqlite::types::ToSql>>,
+}
+
+fn build_tx_filter_parts(filter: &TransactionFilter) -> TxFilterParts {
+    let mut where_clause = String::from(" WHERE 1=1");
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(ref account_id) = filter.account_id {
+        where_clause.push_str(" AND t.account_id = ?");
+        params.push(Box::new(account_id.clone()));
+    }
+    if let Some(ref date_from) = filter.date_from {
+        where_clause.push_str(" AND t.date >= ?");
+        params.push(Box::new(date_from.clone()));
+    }
+    if let Some(ref date_to) = filter.date_to {
+        where_clause.push_str(" AND t.date <= ?");
+        params.push(Box::new(date_to.clone()));
+    }
+    if let Some(ref payee) = filter.payee {
+        where_clause.push_str(" AND lower(p.name) LIKE ?");
+        params.push(Box::new(format!("%{}%", payee.to_lowercase())));
+    }
+    if let Some(ref category_id) = filter.category_id {
+        where_clause.push_str(" AND t.category_id = ?");
+        params.push(Box::new(category_id.clone()));
+    }
+    if let Some(amount_min) = filter.amount_min {
+        where_clause.push_str(" AND t.amount >= ?");
+        params.push(Box::new(amount_min));
+    }
+    if let Some(amount_max) = filter.amount_max {
+        where_clause.push_str(" AND t.amount <= ?");
+        params.push(Box::new(amount_max));
+    }
+    if let Some(ref memo) = filter.memo {
+        where_clause.push_str(" AND lower(t.memo) LIKE ?");
+        params.push(Box::new(format!("%{}%", memo.to_lowercase())));
+    }
+    if let Some(cleared) = filter.cleared {
+        where_clause.push_str(" AND t.cleared = ?");
+        params.push(Box::new(cleared as i32));
+    }
+
+    TxFilterParts {
+        where_clause,
+        params,
+    }
+}
+
+fn count_transactions_internal(conn: &Connection, filter: &TransactionFilter) -> Result<i64, String> {
+    let parts = build_tx_filter_parts(filter);
+    let sql = format!(
+        "SELECT COUNT(*) FROM transactions t
+         LEFT JOIN payees p ON t.payee_id = p.id
+         LEFT JOIN categories c ON t.category_id = c.id{}",
+        parts.where_clause
+    );
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        parts.params.iter().map(|p| p.as_ref()).collect();
+    conn.query_row(&sql, params_ref.as_slice(), |r| r.get(0))
+        .map_err(db_err)
+}
+
+fn sum_amounts_before_offset(
+    conn: &Connection,
+    filter: &TransactionFilter,
+    offset: i64,
+) -> Result<f64, String> {
+    if offset <= 0 {
+        return Ok(0.0);
+    }
+    let parts = build_tx_filter_parts(filter);
+    let sql = format!(
+        "SELECT COALESCE(SUM(sub.amount), 0) FROM (
+            SELECT t.amount FROM transactions t
+            LEFT JOIN payees p ON t.payee_id = p.id
+            LEFT JOIN categories c ON t.category_id = c.id
+            {} ORDER BY t.date ASC, t.id ASC LIMIT ?
+         ) sub",
+        parts.where_clause
+    );
+    let mut params = parts.params;
+    params.push(Box::new(offset));
+    let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        params.iter().map(|p| p.as_ref()).collect();
+    conn.query_row(&sql, params_ref.as_slice(), |r| r.get(0))
+        .map_err(db_err)
+}
+
+fn list_transactions_internal(
+    conn: &Connection,
     filter: TransactionFilter,
 ) -> Result<Vec<Transaction>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let mut sql = String::from(
+    let parts = build_tx_filter_parts(&filter);
+    let mut sql = format!(
         "SELECT t.id, t.account_id, t.date, t.payee_id, p.name, t.category_id, c.name,
                 t.amount, t.memo, t.cleared, t.reconciled, t.transfer_id
          FROM transactions t
          LEFT JOIN payees p ON t.payee_id = p.id
          LEFT JOIN categories c ON t.category_id = c.id
-         WHERE 1=1",
+         {} ORDER BY t.date ASC, t.id ASC",
+        parts.where_clause
     );
-    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-    if let Some(ref account_id) = filter.account_id {
-        sql.push_str(" AND t.account_id = ?");
-        param_values.push(Box::new(account_id.clone()));
+    let mut params = parts.params;
+    if let Some(limit) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        params.push(Box::new(limit));
     }
-    if let Some(ref date_from) = filter.date_from {
-        sql.push_str(" AND t.date >= ?");
-        param_values.push(Box::new(date_from.clone()));
+    if let Some(offset) = filter.offset {
+        sql.push_str(" OFFSET ?");
+        params.push(Box::new(offset));
     }
-    if let Some(ref date_to) = filter.date_to {
-        sql.push_str(" AND t.date <= ?");
-        param_values.push(Box::new(date_to.clone()));
-    }
-    if let Some(ref payee) = filter.payee {
-        sql.push_str(" AND lower(p.name) LIKE ?");
-        param_values.push(Box::new(format!("%{}%", payee.to_lowercase())));
-    }
-    if let Some(ref category_id) = filter.category_id {
-        sql.push_str(" AND t.category_id = ?");
-        param_values.push(Box::new(category_id.clone()));
-    }
-    if let Some(amount_min) = filter.amount_min {
-        sql.push_str(" AND t.amount >= ?");
-        param_values.push(Box::new(amount_min));
-    }
-    if let Some(amount_max) = filter.amount_max {
-        sql.push_str(" AND t.amount <= ?");
-        param_values.push(Box::new(amount_max));
-    }
-    if let Some(ref memo) = filter.memo {
-        sql.push_str(" AND lower(t.memo) LIKE ?");
-        param_values.push(Box::new(format!("%{}%", memo.to_lowercase())));
-    }
-    if let Some(cleared) = filter.cleared {
-        sql.push_str(" AND t.cleared = ?");
-        param_values.push(Box::new(cleared as i32));
-    }
-    sql.push_str(" ORDER BY t.date ASC, t.id ASC");
 
     let params_ref: Vec<&dyn rusqlite::types::ToSql> =
-        param_values.iter().map(|p| p.as_ref()).collect();
+        params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = conn.prepare(&sql).map_err(db_err)?;
     let rows: Vec<Transaction> = stmt
         .query_map(params_ref.as_slice(), |row| {
-            row_to_transaction(&conn, row, None).map_err(to_sqlite_err)
+            row_to_transaction(conn, row, None).map_err(to_sqlite_err)
         })
         .map_err(db_err)?
         .collect::<Result<Vec<_>, _>>()
@@ -804,7 +887,8 @@ pub fn list_transactions(
                 |r| r.get(0),
             )
             .map_err(db_err)?;
-        let mut balance = opening;
+        let prior_sum = sum_amounts_before_offset(conn, &filter, filter.offset.unwrap_or(0))?;
+        let mut balance = opening + prior_sum;
         let mut result = Vec::with_capacity(rows.len());
         for mut tx in rows {
             balance += tx.amount;
@@ -815,6 +899,62 @@ pub fn list_transactions(
     } else {
         Ok(rows)
     }
+}
+
+#[tauri::command]
+pub fn list_transactions(
+    state: State<AppState>,
+    filter: TransactionFilter,
+) -> Result<Vec<Transaction>, String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    list_transactions_internal(&conn, filter)
+}
+
+#[tauri::command]
+pub fn count_transactions(
+    state: State<AppState>,
+    filter: TransactionFilter,
+) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    count_transactions_internal(&conn, &filter)
+}
+
+#[tauri::command]
+pub fn get_account_register(
+    state: State<AppState>,
+    account_id: String,
+    filter: TransactionFilter,
+) -> Result<AccountRegister, String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let account = get_account_internal(&conn, &account_id)?;
+    let mut tx_filter = filter;
+    tx_filter.account_id = Some(account_id.clone());
+    let total_count = count_transactions_internal(&conn, &tx_filter)?;
+    let transactions = list_transactions_internal(&conn, tx_filter)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, account_id, filter_json FROM saved_filters
+             WHERE account_id IS NULL OR account_id = ?1 ORDER BY name",
+        )
+        .map_err(db_err)?;
+    let saved_filters = stmt
+        .query_map([&account_id], |row| {
+            Ok(SavedFilter {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                account_id: row.get(2)?,
+                filter_json: row.get(3)?,
+            })
+        })
+        .map_err(db_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_err)?;
+    Ok(AccountRegister {
+        account,
+        transactions,
+        total_count,
+        saved_filters,
+    })
 }
 
 #[tauri::command]
@@ -2397,21 +2537,6 @@ fn escape_csv(value: &str) -> String {
     }
 }
 
-fn parse_import_date(raw: &str) -> String {
-    if let Ok(d) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-        return d.format("%Y-%m-%d").to_string();
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(raw, "%m/%d/%Y") {
-        return d.format("%Y-%m-%d").to_string();
-    }
-    if raw.len() >= 8 {
-        if let Ok(d) = NaiveDate::parse_from_str(&raw[..8], "%Y%m%d") {
-            return d.format("%Y-%m-%d").to_string();
-        }
-    }
-    raw.to_string()
-}
-
 fn build_import_preview(
     conn: &Connection,
     account_id: &str,
@@ -2432,121 +2557,6 @@ fn build_import_preview(
         total_rows,
         duplicate_count,
     })
-}
-
-fn parse_csv_content(content: &str) -> Vec<ImportRow> {
-    let mut rows = Vec::new();
-    let lines: Vec<&str> = content.lines().collect();
-    if lines.is_empty() {
-        return rows;
-    }
-    let start = if lines[0].to_lowercase().contains("date") {
-        1
-    } else {
-        0
-    };
-    for line in &lines[start..] {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let fields: Vec<&str> = line.split(',').map(|s| s.trim().trim_matches('"')).collect();
-        if fields.len() < 2 {
-            continue;
-        }
-        let date = parse_import_date(fields[0]);
-        let amount: f64 = fields[1].parse().unwrap_or(0.0);
-        let payee = fields.get(2).map(|s| s.to_string());
-        let memo = fields.get(3).map(|s| s.to_string());
-        let category = fields.get(4).map(|s| s.to_string());
-        rows.push(ImportRow {
-            date,
-            amount,
-            payee,
-            memo,
-            category,
-            is_duplicate: false,
-        });
-    }
-    rows
-}
-
-fn parse_qif_content(content: &str) -> Vec<ImportRow> {
-    let mut rows = Vec::new();
-    let mut date = String::new();
-    let mut amount = 0.0f64;
-    let mut payee: Option<String> = None;
-    let mut memo: Option<String> = None;
-    for line in content.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let (code, rest) = line.split_at(1.min(line.len()));
-        let value = rest.trim();
-        match code {
-            "D" => date = parse_import_date(value),
-            "T" => amount = value.replace(',', "").parse().unwrap_or(0.0),
-            "P" => payee = Some(value.to_string()),
-            "M" => memo = Some(value.to_string()),
-            "^" => {
-                if !date.is_empty() {
-                    rows.push(ImportRow {
-                        date: date.clone(),
-                        amount,
-                        payee: payee.clone(),
-                        memo: memo.clone(),
-                        category: None,
-                        is_duplicate: false,
-                    });
-                }
-                date.clear();
-                amount = 0.0;
-                payee = None;
-                memo = None;
-            }
-            _ => {}
-        }
-    }
-    rows
-}
-
-fn parse_ofx_content(content: &str) -> Vec<ImportRow> {
-    let mut rows = Vec::new();
-    let upper = content.to_uppercase();
-    let parts: Vec<&str> = upper.split("<STMTTRN>").collect();
-    for part in parts.iter().skip(1) {
-        let date = extract_ofx_tag(part, "DTPOSTED")
-            .map(|d| parse_import_date(&d))
-            .unwrap_or_default();
-        let amount = extract_ofx_tag(part, "TRNAMT")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0);
-        let payee = extract_ofx_tag(part, "NAME");
-        let memo = extract_ofx_tag(part, "MEMO");
-        if !date.is_empty() {
-            rows.push(ImportRow {
-                date,
-                amount,
-                payee,
-                memo,
-                category: None,
-                is_duplicate: false,
-            });
-        }
-    }
-    rows
-}
-
-fn extract_ofx_tag(block: &str, tag: &str) -> Option<String> {
-    let open = format!("<{tag}>");
-    let start = block.find(&open)? + open.len();
-    let rest = &block[start..];
-    let end = rest.find('<').unwrap_or(rest.len());
-    let value = rest[..end].trim().to_string();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
 }
 
 fn commit_import_rows(
@@ -2781,6 +2791,7 @@ pub fn backup_database(app: tauri::AppHandle, dest_path: String) -> Result<(), S
     let dest = validate_file_path(&dest_path)?;
     let src = crate::db::db_path(&app)?;
     std::fs::copy(&src, &dest).map_err(|e| format!("Backup failed: {e}"))?;
+    log::info!("Database backed up to {}", dest.display());
     Ok(())
 }
 
@@ -2792,6 +2803,7 @@ pub fn restore_database(app: tauri::AppHandle, src_path: String) -> Result<(), S
     }
     let dest = crate::db::db_path(&app)?;
     std::fs::copy(&src, &dest).map_err(|e| format!("Restore failed: {e}"))?;
+    log::warn!("Database restored from {}", src.display());
     Ok(())
 }
 
@@ -2883,4 +2895,138 @@ pub fn unlock_app(state: State<AppState>, password: String) -> Result<bool, Stri
 pub fn is_app_locked(state: State<AppState>) -> Result<bool, String> {
     let locked = state.is_locked.lock().map_err(|e| format!("Lock error: {e}"))?;
     Ok(*locked)
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::db::open_test_connection;
+
+    fn create_test_account(conn: &Connection) -> String {
+        let id = new_id();
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, currency, opening_balance, is_archived, created_at)
+             VALUES (?1, 'Test', 'checking', 'USD', 100.0, 0, '2024-01-01')",
+            [&id],
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn transaction_lifecycle() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        let input = CreateTransaction {
+            account_id: account_id.clone(),
+            date: "2024-02-01".into(),
+            payee_name: Some("Store".into()),
+            category_id: None,
+            amount: -25.0,
+            memo: None,
+            cleared: false,
+            splits: vec![],
+            tag_ids: vec![],
+        };
+        let tx = create_transaction_internal(&conn, &input).unwrap();
+        assert!((tx.amount + 25.0).abs() < 0.01);
+
+        conn.execute(
+            "UPDATE transactions SET amount = -30.0, memo = 'Updated' WHERE id = ?1",
+            [&tx.id],
+        )
+        .unwrap();
+        let tx2 = get_transaction_internal(&conn, &tx.id).unwrap();
+        assert!((tx2.amount + 30.0).abs() < 0.01);
+
+        delete_transaction_children(&conn, &tx.id).unwrap();
+        conn.execute("DELETE FROM transactions WHERE id = ?1", [&tx.id])
+            .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions WHERE id = ?1", [&tx.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn transfer_syncs_both_accounts() {
+        let conn = open_test_connection();
+        let from_id = create_test_account(&conn);
+        let to_id = create_test_account(&conn);
+        let transfer_id = new_id();
+        let from_tx = new_id();
+        let to_tx = new_id();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, date, amount, cleared, reconciled, transfer_id)
+             VALUES (?1, ?2, '2024-03-01', -50.0, 0, 0, ?3)",
+            params![from_tx, from_id, transfer_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, date, amount, cleared, reconciled, transfer_id)
+             VALUES (?1, ?2, '2024-03-01', 50.0, 0, 0, ?3)",
+            params![to_tx, to_id, transfer_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transfers (id, from_transaction_id, to_transaction_id) VALUES (?1, ?2, ?3)",
+            params![transfer_id, from_tx, to_tx],
+        )
+        .unwrap();
+        let from_bal = account_balance(&conn, &from_id).unwrap();
+        let to_bal = account_balance(&conn, &to_id).unwrap();
+        assert!((from_bal - 50.0).abs() < 0.01);
+        assert!((to_bal - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn import_duplicate_detection() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        let input = CreateTransaction {
+            account_id: account_id.clone(),
+            date: "2024-04-01".into(),
+            payee_name: Some("Coffee".into()),
+            category_id: None,
+            amount: -5.0,
+            memo: None,
+            cleared: false,
+            splits: vec![],
+            tag_ids: vec![],
+        };
+        create_transaction_internal(&conn, &input).unwrap();
+        let rows = parse_csv_content("2024-04-01,-5.00,Coffee,,");
+        let preview = build_import_preview(&conn, &account_id, rows).unwrap();
+        assert_eq!(preview.duplicate_count, 1);
+        assert!(preview.rows[0].is_duplicate);
+    }
+
+    #[test]
+    fn paginated_register_running_balance() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        for i in 1..=5 {
+            let input = CreateTransaction {
+                account_id: account_id.clone(),
+                date: format!("2024-05-{i:02}"),
+                payee_name: None,
+                category_id: None,
+                amount: -10.0,
+                memo: None,
+                cleared: false,
+                splits: vec![],
+                tag_ids: vec![],
+            };
+            create_transaction_internal(&conn, &input).unwrap();
+        }
+        let filter = TransactionFilter {
+            account_id: Some(account_id),
+            limit: Some(2),
+            offset: Some(2),
+            ..Default::default()
+        };
+        let page = list_transactions_internal(&conn, filter).unwrap();
+        assert_eq!(page.len(), 2);
+        assert!((page[0].running_balance.unwrap() - 70.0).abs() < 0.01);
+    }
 }

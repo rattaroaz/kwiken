@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useDataStore, useSecurityStore } from "@/stores/index";
 import { db } from "@/services/db";
+import { logger } from "@/lib/logger";
 
 export function useIdleLock() {
   const settings = useDataStore((s) => s.settings);
@@ -26,7 +27,12 @@ export function useIdleLock() {
     const timeoutMs = minutes * 60 * 1000;
     const timer = setInterval(() => {
       if (Date.now() - lastActivity >= timeoutMs) {
-        db.lockApp().then(() => setLocked(true)).catch(() => setLocked(true));
+        db.lockApp()
+          .then(() => {
+            logger.security.info("App auto-locked after idle timeout", { minutes });
+            setLocked(true);
+          })
+          .catch(() => setLocked(true));
       }
     }, 10000);
 

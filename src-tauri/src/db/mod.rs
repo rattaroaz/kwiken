@@ -179,8 +179,55 @@ pub fn open_connection(app: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(&path).map_err(|e| format!("Database open failed: {e}"))?;
     conn.execute("PRAGMA foreign_keys = ON", [])
         .map_err(|e| format!("Database pragma failed: {e}"))?;
+    conn.execute("PRAGMA journal_mode = WAL", [])
+        .map_err(|e| format!("Database pragma failed: {e}"))?;
     run_migrations(&conn)?;
     Ok(conn)
+}
+
+pub fn check_integrity(conn: &Connection) -> bool {
+    conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+        .map(|result| result == "ok")
+        .unwrap_or(false)
+}
+
+const SHUTDOWN_KEY: &str = "last_shutdown_clean";
+
+pub fn detect_unclean_shutdown(conn: &Connection) -> Result<bool, String> {
+    let was_clean: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SHUTDOWN_KEY],
+            |r| r.get(0),
+        )
+        .ok();
+    let unclean = was_clean.as_deref() == Some("false");
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, 'false')
+         ON CONFLICT(key) DO UPDATE SET value = 'false'",
+        [SHUTDOWN_KEY],
+    )
+    .map_err(|e| format!("Could not record session start: {e}"))?;
+    Ok(unclean)
+}
+
+pub fn mark_clean_shutdown(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, 'true')
+         ON CONFLICT(key) DO UPDATE SET value = 'true'",
+        [SHUTDOWN_KEY],
+    )
+    .map_err(|e| format!("Could not mark clean shutdown: {e}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn open_test_connection() -> Connection {
+    let conn = Connection::open_in_memory().expect("in-memory db");
+    conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+    run_migrations(&conn).expect("migrations");
+    seed_default_categories(&conn).expect("seed");
+    conn
 }
 
 fn run_migrations(conn: &Connection) -> Result<(), String> {
@@ -335,4 +382,44 @@ pub fn apply_auto_category(conn: &Connection, payee_name: &str) -> Option<String
     )
     .ok()
     .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integrity_check_passes_on_fresh_db() {
+        let conn = open_test_connection();
+        assert!(check_integrity(&conn));
+    }
+
+    #[test]
+    fn unclean_shutdown_detection() {
+        let conn = open_test_connection();
+        assert!(!detect_unclean_shutdown(&conn).unwrap());
+        mark_clean_shutdown(&conn).unwrap();
+        assert!(!detect_unclean_shutdown(&conn).unwrap());
+        conn.execute(
+            "UPDATE settings SET value = 'false' WHERE key = ?1",
+            [SHUTDOWN_KEY],
+        )
+        .unwrap();
+        assert!(detect_unclean_shutdown(&conn).unwrap());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_relative_paths() {
+        assert!(validate_file_path("relative/path.db").is_err());
+    }
+
+    #[test]
+    fn validate_file_path_rejects_traversal() {
+        let bad = if cfg!(windows) {
+            "C:\\Users\\..\\etc\\passwd"
+        } else {
+            "/tmp/../etc/passwd"
+        };
+        assert!(validate_file_path(bad).is_err());
+    }
 }
