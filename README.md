@@ -75,7 +75,7 @@ Manual check only: **Help → Check for updates**. See [docs/publish-update.md](
 
 ## Version
 
-Current version: **0.1.0** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
+Current version: **0.1.1** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
 
 ## License
 

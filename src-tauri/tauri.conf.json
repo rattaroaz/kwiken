@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kwiken",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.kwiken.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -38,9 +38,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVCQUNGRDE5NzEyRjcxRkQKUldUOWNTOXhHZjJzNnhadkJSZXpCY0FCTGRnRnBNTVVEWDJQMmoxd1JjMlQwMFpWZ0NZR0dJd0kK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFMzFGMEM0QTJBMkI0MEIKUldRTHRLS2l4UEF4am1kV3JNdzlyTkpSUStvZEN1M1dSdjVDbGhMTFNjajRXajZKWkp4THROdXYK",
       "endpoints": [
-        "https://github.com/kimri/kwiken/releases/latest/download/latest.json"
+        "https://github.com/rattaroaz/kwiken/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
