@@ -29,6 +29,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify required source files
+        shell: pwsh
+        run: |
+          $required = @(
+            "src/components/logs/LogPanel.tsx",
+            "src/stores/logStore.ts"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              Write-Error "Missing required file: $path (check .gitignore and git add)"
+              exit 1
+            }
+          }
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
