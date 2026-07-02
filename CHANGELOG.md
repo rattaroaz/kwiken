@@ -4,6 +4,12 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-07-01
+
+### Fixed
+
+- E2E update test reads app version from `package.json` instead of a hardcoded value.
+
 ## [2.0.0] - 2026-07-01
 
 ### Added
@@ -54,7 +60,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.1
 [2.0.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.0
 [0.1.2]: https://github.com/rattaroaz/kwiken/releases/tag/v0.1.2
 [0.1.1]: https://github.com/rattaroaz/kwiken/releases/tag/v0.1.1
