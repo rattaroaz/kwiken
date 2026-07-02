@@ -1,0 +1,360 @@
+================================================================================
+KWIKEN — PRODUCTION ROADMAP
+Quicken Clone | TypeScript + Tauri 2 + SQLite
+================================================================================
+
+Legend: [ ] = not started   [x] = complete
+
+================================================================================
+PHASE 1 — PROJECT FOUNDATION
+================================================================================
+
+[x] Initialize Tauri 2 project with TypeScript frontend (Vite + React recommended)
+[x] Configure TypeScript strict mode, path aliases (@/), and resolveJsonModule
+[x] Set up project structure (src/, src-tauri/, components/, services/, stores/, db/)
+[x] Choose and install UI framework (e.g. Tailwind CSS + shadcn/ui or similar)
+[x] Configure ESLint, Prettier, and consistent code formatting
+[x] Set app identity in tauri.conf.json (productName: Kwiken, identifier: com.kwiken.desktop)
+[x] Sync version across package.json, Cargo.toml, and tauri.conf.json (start at 0.1.0)
+[x] Create src/lib/constants.ts with APP_NAME and APP_VERSION from package.json
+[x] Set up Zustand (or equivalent) for global UI state
+[x] Configure app window defaults (size, min size, title bar, theme)
+[x] Add application logging utility (categories: app, db, import, update, security)
+[x] Create README with dev setup, build, and contribution instructions
+[x] Add .gitignore for node_modules, target/, dist/, .env, signing keys, local DB files
+
+================================================================================
+PHASE 2 — SQLITE DATABASE LAYER
+================================================================================
+
+[x] Add Rust SQLite dependency (rusqlite or sqlx) in src-tauri/Cargo.toml
+[x] Create database initialization module in Rust (open/create DB on first launch)
+[x] Store database file in Tauri app data directory (per-user, portable path)
+[x] Design schema: accounts table (id, name, type, currency, balance, institution, created_at)
+[x] Design schema: categories table (id, name, parent_id, type: income/expense/transfer)
+[x] Design schema: payees table (id, name, default_category_id)
+[x] Design schema: transactions table (id, account_id, date, payee_id, amount, memo, cleared, reconciled)
+[x] Design schema: transaction_splits table (id, transaction_id, category_id, amount, memo)
+[x] Design schema: transfers table (link two transactions across accounts)
+[x] Design schema: budgets table (id, category_id, period, amount)
+[x] Design schema: recurring_transactions table (id, template fields, frequency, next_date)
+[x] Design schema: settings table (key-value store for user preferences)
+[x] Design schema: attachments table (id, transaction_id, file_path, mime_type)
+[x] Write migration system (versioned SQL migrations, applied on startup)
+[x] Create Tauri commands for all CRUD operations (invoke from TypeScript)
+[x] Add database indexes on account_id, date, category_id, payee_id for query performance
+[x] Implement database backup command (export .kwiken or .sqlite file)
+[x] Implement database restore command (import with validation)
+[x] Add TypeScript types mirroring all database entities (shared/types.ts)
+[x] Create db service layer in TypeScript wrapping Tauri invoke calls
+[x] Handle database errors with user-friendly messages and logging
+
+================================================================================
+PHASE 3 — CORE FINANCIAL FEATURES (MVP)
+================================================================================
+
+ACCOUNTS
+[x] Account list view (checking, savings, credit card, investment, loan, cash)
+[x] Create, edit, delete accounts with validation
+[x] Display running balance per account (computed from transactions)
+[x] Account detail view with transaction register
+[x] Opening balance transaction support
+[x] Account archiving (hide without deleting history)
+
+TRANSACTIONS
+[x] Transaction register (spreadsheet-style: date, payee, category, payment, deposit, balance)
+[x] Add single-line transaction (expense, income, transfer)
+[x] Add split transaction (multiple categories on one transaction)
+[x] Edit and delete transactions with undo consideration
+[x] Mark transactions cleared / uncleared
+[x] Transaction search and filter (date range, payee, category, amount, memo)
+[x] Bulk select and bulk edit/delete transactions
+[x] Duplicate transaction action
+
+CATEGORIES & PAYEES
+[x] Default category tree (Food, Housing, Transportation, Income, etc.)
+[x] Create, edit, delete, and nest categories
+[x] Payee autocomplete from history
+[x] Auto-categorize rules (if payee contains X â†’ category Y)
+
+TRANSFERS
+[x] Transfer between two accounts (creates linked transactions)
+[x] Edit transfer amount on one side, sync the other
+
+RECONCILIATION
+[x] Start reconciliation session for an account
+[x] Enter statement ending balance and date
+[x] Check off cleared transactions against statement
+[x] Finish reconciliation (lock cleared items, show difference)
+
+================================================================================
+PHASE 4 — REPORTS & BUDGETING
+================================================================================
+
+[x] Net worth dashboard (assets minus liabilities over time)
+[x] Spending by category report (pie chart + table, date range)
+[x] Income vs expense report (monthly bar chart)
+[x] Cash flow report (inflows/outflows by period)
+[x] Account balance history chart
+[x] Budget creation (monthly per category)
+[x] Budget vs actual comparison view
+[x] Budget progress bars with over-budget warnings
+[x] Export report to CSV
+[x] Export report to PDF (optional, via print or library)
+[x] Tax-related category tagging and annual summary report
+
+================================================================================
+PHASE 5 — IMPORT / EXPORT & DATA PORTABILITY
+================================================================================
+
+[x] Export all data to CSV (accounts, transactions, categories)
+[x] Export full database backup (.kwiken archive)
+[x] Import CSV transactions (map columns: date, amount, payee, memo)
+[x] Import QIF format (Quicken interchange — key for Quicken clone parity)
+[x] Import OFX/QFX bank statements
+[x] Duplicate detection on import (match date + amount + payee)
+[x] Import preview screen before committing
+[x] Scheduled automatic backup to user-chosen folder
+
+================================================================================
+PHASE 6 — USER INTERFACE & EXPERIENCE
+================================================================================
+
+LAYOUT & NAVIGATION
+[x] Main app shell (sidebar navigation + content area)
+[x] Sidebar sections: Dashboard, Accounts, Budgets, Reports, Settings
+[x] Responsive layout for different window sizes
+[x] Light and dark theme support (system preference + manual toggle)
+[x] Keyboard shortcuts (new transaction, search, save, undo)
+[x] Command palette / quick search (Ctrl+K style)
+
+DASHBOARD
+[x] Overview cards: total net worth, monthly spending, monthly income
+[x] Recent transactions list
+[x] Upcoming bills / recurring transactions widget
+[x] Budget status summary widget
+
+FORMS & DIALOGS
+[x] Transaction entry form (modal and inline register edit)
+[x] Account setup wizard for first-time users
+[x] Confirmation dialogs for destructive actions
+[x] Toast notifications for success/error feedback
+[x] Loading states and skeleton screens
+
+SETTINGS
+[x] Settings page: currency, date format, fiscal year start
+[x] Settings page: default account, theme, backup location
+[x] Settings page: auto-backup frequency
+[x] About dialog with app version and license info
+
+================================================================================
+PHASE 7 — ADVANCED FEATURES (QUICKEN PARITY)
+================================================================================
+
+[x] Recurring / scheduled transactions (daily, weekly, monthly, yearly)
+[x] Auto-enter recurring transactions on due date (with user prompt option)
+[x] Reminders for upcoming bills
+[x] Investment account tracking (holdings, shares, cost basis) — basic
+[x] Loan account amortization (principal, interest split)
+[x] Credit card payment tracking (minimum due, due date)
+[x] Tags / labels on transactions (in addition to categories)
+[x] Transaction attachments (receipt images, PDFs)
+[x] Multi-currency support (account currency + exchange rates)
+[x] Saved filters and custom views in register
+[x] Transaction templates (frequent payee + category combos)
+[x] Year-end archive and close books workflow
+
+================================================================================
+PHASE 8 — SECURITY & DATA PROTECTION
+================================================================================
+
+[ ] Optional database encryption at rest (SQLCipher or equivalent)
+[x] Master password / app lock on startup
+[x] Auto-lock after idle timeout
+[x] Secure credential storage for any API keys (Tauri stronghold or OS keychain)
+[x] No sensitive data in logs
+[x] Sanitize all user inputs before SQL queries (parameterized queries only)
+[x] Validate file paths on import/attachment to prevent path traversal
+[x] Privacy mode: hide balances in UI until unlocked
+
+================================================================================
+PHASE 9 — IN-APP UPDATER SYSTEM (per updaterdocs.txt)
+================================================================================
+
+Manual check only — Help â†’ Check for updates. No auto-check on startup.
+
+PHASE 9A — DEPENDENCIES & RUST BACKEND
+[x] Install npm: @tauri-apps/plugin-updater, @tauri-apps/plugin-process, @tauri-apps/plugin-dialog
+[x] Add Cargo: tauri-plugin-updater = "2", tauri-plugin-process = "2"
+[x] Register both plugins in src-tauri/src/lib.rs before .run()
+[x] Add capabilities: updater:default, process:default, dialog:allow-ask
+
+PHASE 9B — TAURI CONFIG & SIGNING
+[x] Set bundle.createUpdaterArtifacts: true in tauri.conf.json
+[x] Set bundle.targets: ["nsis", "msi"] for Windows
+[x] Generate minisign key pair WITH password flag:
+      npm run tauri signer generate -- -w scripts/tauri-signing.key --ci --force -p "YOUR_STRONG_PASSWORD"
+[x] Run local sign test (sign a test file) — must pass before GitHub secrets
+[x] Copy public key into plugins.updater.pubkey in tauri.conf.json
+[x] Set plugins.updater.endpoints to GitHub Releases latest.json URL:
+      https://github.com/<ORG>/kwiken/releases/latest/download/latest.json
+[x] Set plugins.updater.windows.installMode: "passive"
+[x] Gitignore scripts/tauri-signing.key (private)
+[x] Commit scripts/tauri-signing.key.pub (public reference only)
+[x] Sync three-way key: local .key file, GitHub secret, tauri.conf.json pubkey
+
+PHASE 9C — FRONTEND UPDATE SERVICE
+[x] Create src/lib/semver.ts (parseSemver, isVersionNewer) — defense-in-depth version guard
+[x] Create src/lib/semver.test.ts (1.2.0 > 1.1.9, equal not newer, v-prefix, 1.2 â†’ 1.2.0)
+[x] Add UpdateDialogPhase type to shared/types.ts (idle, checking, up_to_date, downloading, installing, error)
+[x] Add update dialog state to UI store (showUpdateDialog, updatePhase, updateMessage)
+[x] Create src/services/updateService.ts with checkForUpdatesAndApply()
+[x] Implement semver guard: refuse download if remote <= installed
+[x] Implement unsaved-work prompt before download (confirm discard pending edits)
+[x] Implement feed-unavailable detection (404, not found, invalid release json)
+[x] Add E2E bypass when import.meta.env.VITE_E2E is set
+[x] Add update category logging (check started, up_to_date, download, install, errors)
+
+PHASE 9D — UPDATE UI
+[x] Create src/components/help/UpdateDialog.tsx (modal with phase-based title and message)
+[x] Mount <UpdateDialog /> at app root (App.tsx)
+[x] Add Help menu â†’ "Check for updates" calling checkForUpdatesAndApply()
+[x] Display static "Version {APP_VERSION}" text in Help menu
+[x] Do NOT add startup auto-check (manual only by design)
+
+PHASE 9E — CI RELEASE WORKFLOW
+[x] Create .github/workflows/release.yml triggered on tags v*
+[x] Workflow: checkout, setup-node (v22), npm ci, Rust stable
+[x] Workflow: Enable VBScript capability for WiX MSI (Windows 11 24H2+ runners)
+[x] Workflow: Normalize signing secrets (trim whitespace, EOF delimiters for base64)
+[x] Workflow: tauri-apps/tauri-action@v0 with includeUpdaterJson: true, updaterJsonPreferNsis: true
+[x] Workflow: args --bundles nsis,msi
+[x] Workflow: permissions contents: write for release asset upload
+[x] Add GitHub secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+[x] Document publish procedure: bump versions â†’ commit â†’ tag vX.Y.Z â†’ push tag â†’ verify release assets
+
+PHASE 9F — LOCAL BUILD STRATEGY
+[x] Create scripts/tauri-build.mjs (disable createUpdaterArtifacts when unsigned)
+[x] Add npm scripts: build:win, build:win:signed
+[x] Document signed vs unsigned local build workflow
+
+PHASE 9G — UPDATER TESTS
+[x] Create src/services/updateService.test.ts (mock updater, process, dialog plugins)
+[x] Test: check returns null â†’ up_to_date, no download
+[x] Test: same version as installed â†’ up_to_date (semver guard)
+[x] Test: newer version â†’ downloadAndInstall + relaunch
+[x] Test: unsaved changes declined â†’ dialog closed, no download
+[x] Test: generic error â†’ error phase
+[x] Test: missing feed error â†’ setup guidance message
+[x] Create UpdateDialog.test.tsx (titles per phase, close button behavior)
+[x] Create e2e/mocks/tauriUpdater.ts and tauriProcess.ts for Playwright
+[x] Create e2e/tests/update.spec.ts (Help â†’ Check for updates â†’ up to date dialog)
+
+PHASE 9H — FIRST UPDATE RELEASE VALIDATION (MANUAL QA)
+[ ] Install version N from release .exe
+[ ] Publish release N+1 with working CI secrets
+[ ] Verify curl latest.json returns version N+1
+[ ] Help â†’ Check for updates offers download
+[ ] App restarts on version N+1 after install
+[ ] Check again shows "up to date"
+[ ] Verify source-only version bump without release still shows up to date or feed error
+
+================================================================================
+PHASE 10 — TESTING & QUALITY ASSURANCE
+================================================================================
+
+UNIT TESTS
+[ ] Database service tests (CRUD, migrations, edge cases)
+[ ] Transaction balance calculation tests
+[ ] Category tree operations tests
+[ ] Import parser tests (CSV, QIF, OFX)
+[ ] Budget calculation tests
+[ ] Semver and update service tests (see Phase 9G)
+
+INTEGRATION TESTS
+[ ] Full transaction lifecycle (create â†’ edit â†’ reconcile â†’ delete)
+[ ] Transfer sync between accounts
+[ ] Import â†’ duplicate detection â†’ commit flow
+[ ] Backup and restore round-trip
+
+E2E TESTS (Playwright)
+[ ] First-run account setup wizard
+[ ] Add transaction and verify balance update
+[ ] Run spending report with known data
+[ ] Settings persist across restart
+[ ] Update check flow (mocked)
+
+MANUAL QA CHECKLIST
+[ ] Fresh install on clean Windows machine
+[ ] Upgrade from previous version (database migrations)
+[ ] Large dataset performance (10k+ transactions)
+[ ] All keyboard shortcuts work
+[ ] Dark/light theme consistent across all views
+
+================================================================================
+PHASE 11 — PERFORMANCE & PRODUCTION HARDENING
+================================================================================
+
+[ ] Paginate or virtualize transaction register for large accounts
+[ ] Debounce search and filter inputs
+[ ] Optimize SQLite queries (EXPLAIN, avoid N+1 invoke patterns)
+[ ] Batch Tauri invoke calls where possible
+[ ] Lazy-load report charts and heavy views
+[ ] Memory profiling with large imports
+[ ] Graceful handling of corrupt database (offer restore from backup)
+[ ] Crash recovery: detect unclean shutdown, verify DB integrity on startup
+[ ] Error boundary components in React for unhandled UI errors
+[ ] User-facing error reporting (copy error details to clipboard)
+
+================================================================================
+PHASE 12 — PACKAGING, DISTRIBUTION & DOCUMENTATION
+================================================================================
+
+[ ] Windows NSIS installer (.exe) with proper app icon and metadata
+[ ] Windows MSI installer for enterprise deployment
+[ ] Code signing certificate for Windows installer (reduces SmartScreen warnings)
+[ ] App icon set (tray, taskbar, installer, 512px store icon)
+[ ] Write docs/install-windows.md (install, update, uninstall)
+[ ] Write docs/user-guide.md (getting started, accounts, transactions, reports)
+[ ] Write docs/import-guide.md (CSV, QIF, OFX import instructions)
+[ ] Write docs/backup-restore.md
+[ ] Write docs/publish-update.md (version bump, tag, CI, verify latest.json)
+[ ] CHANGELOG.md with semver release notes
+[ ] LICENSE file
+[ ] GitHub Releases page with release notes for each version
+
+================================================================================
+PHASE 13 — PRODUCTION LAUNCH CHECKLIST
+================================================================================
+
+[ ] All Phase 1â€“8 MVP items complete
+[ ] Updater system fully tested end-to-end (Phase 9)
+[ ] Security review: encryption, input validation, no secrets in repo
+[ ] Performance acceptable with realistic data volume
+[ ] All critical paths covered by automated tests
+[ ] v1.0.0 tagged and published to GitHub Releases
+[ ] latest.json accessible at updater endpoint
+[ ] Install from release .exe on clean machine — full smoke test
+[ ] Update from v1.0.0 to v1.0.1 verified
+[ ] Backup/restore verified
+[ ] User documentation complete and linked from Help menu
+[ ] Known limitations documented
+
+================================================================================
+VERSION SYNC REMINDER (every release)
+================================================================================
+
+When releasing, these files MUST match:
+  - package.json â†’ "version"
+  - package-lock.json â†’ root version
+  - src-tauri/Cargo.toml â†’ version
+  - src-tauri/Cargo.lock â†’ crate version
+  - src-tauri/tauri.conf.json â†’ "version"
+  - Git tag: vX.Y.Z
+
+GitHub Release with latest.json must exist for users to receive updates.
+Source code version alone does NOT trigger updates — only published releases do.
+
+================================================================================
+END OF ROADMAP
+================================================================================
