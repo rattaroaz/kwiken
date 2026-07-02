@@ -9,6 +9,6 @@ test.describe("Update check flow", () => {
 
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Up to date" })).toBeVisible();
-    await expect(page.getByText("Kwiken 0.1.1 is up to date.")).toBeVisible();
+    await expect(page.getByText("Kwiken 0.1.2 is up to date.")).toBeVisible();
   });
 });

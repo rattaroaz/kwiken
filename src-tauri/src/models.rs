@@ -274,10 +274,3 @@ pub struct AppInitStatus {
     pub has_accounts: bool,
     pub schema_version: i32,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityStatus {
-    pub has_master_password: bool,
-    pub is_locked: bool,
-    pub privacy_mode: bool,
-}

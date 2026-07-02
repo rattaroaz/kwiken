@@ -5,6 +5,7 @@ import { APP_NAME, APP_VERSION, DEFAULT_SETTINGS } from "@/lib/constants";
 import { db } from "@/services/db";
 import { checkForUpdatesAndApply } from "@/services/updateService";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
+import { useLogStore } from "@/stores/logStore";
 import type { Account, Theme } from "@/shared/types";
 
 export default function SettingsPage() {
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const hasMasterPassword = useSecurityStore((s) => s.hasMasterPassword);
   const setHasMasterPassword = useSecurityStore((s) => s.setHasMasterPassword);
   const setLocked = useSecurityStore((s) => s.setLocked);
+  const openLogPanel = useLogStore((s) => s.openPanel);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -236,6 +238,21 @@ export default function SettingsPage() {
             <button type="button" onClick={lockNow} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted">Lock Now</button>
           )}
         </div>
+      </section>
+
+      <section className="space-y-4 rounded-lg border border-border bg-card p-6">
+        <h2 className="text-lg font-semibold">Logs</h2>
+        <p className="text-sm text-muted-foreground">
+          View application activity, database events, imports, updates, and security logs.
+        </p>
+        <button
+          type="button"
+          data-testid="settings-view-logs"
+          onClick={openLogPanel}
+          className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+        >
+          View application logs
+        </button>
       </section>
 
       <section className="flex gap-3">

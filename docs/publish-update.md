@@ -50,10 +50,10 @@ Actions → Release → Run workflow → enter tag `vX.Y.Z`
 Configured in `src-tauri/tauri.conf.json`:
 
 ```
-https://github.com/kimri/kwiken/releases/latest/download/latest.json
+https://github.com/rattaroaz/kwiken/releases/latest/download/latest.json
 ```
 
-Update `kimri/kwiken` if your GitHub org/repo differs.
+Update `rattaroaz/kwiken` if your GitHub org/repo differs.
 
 ## Local builds
 

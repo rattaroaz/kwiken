@@ -18,7 +18,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 vi.mock("@/lib/constants", () => ({
   APP_NAME: "Kwiken",
-  APP_VERSION: "0.1.1",
+  APP_VERSION: "0.1.2",
 }));
 
 import { checkForUpdatesAndApply } from "./updateService";
@@ -50,7 +50,7 @@ describe("checkForUpdatesAndApply", () => {
 
   it("shows up_to_date when remote version is not newer (semver guard)", async () => {
     mockCheck.mockResolvedValue({
-      version: "0.1.1",
+      version: "0.1.2",
       downloadAndInstall: vi.fn(),
     });
     await checkForUpdatesAndApply();

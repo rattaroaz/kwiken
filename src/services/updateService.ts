@@ -12,7 +12,7 @@ To enable updates for ${APP_NAME}:
 1. Push a GitHub Release with tag vX.Y.Z
 2. Ensure the release workflow uploads latest.json and signed installers
 3. Set GitHub secrets TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-4. Update plugins.updater.endpoints in tauri.conf.json if your repo differs from kimri/kwiken`;
+4. Update plugins.updater.endpoints in tauri.conf.json if your repo differs from rattaroaz/kwiken`;
 
 function upToDateMessage(): string {
   return `${APP_NAME} ${APP_VERSION} is up to date.`;

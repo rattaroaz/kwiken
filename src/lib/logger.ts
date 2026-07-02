@@ -1,8 +1,11 @@
+import { useLogStore } from "@/stores/logStore";
+
 export type LogCategory = "app" | "db" | "import" | "update" | "security";
 
-type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
-interface LogEntry {
+export interface LogEntry {
+  id: string;
   timestamp: string;
   category: LogCategory;
   level: LogLevel;
@@ -27,12 +30,16 @@ function sanitize(metadata?: Record<string, unknown>): Record<string, unknown> |
 
 function log(category: LogCategory, level: LogLevel, message: string, metadata?: Record<string, unknown>) {
   const entry: LogEntry = {
+    id: crypto.randomUUID(),
     timestamp: new Date().toISOString(),
     category,
     level,
     message,
     metadata: sanitize(metadata),
   };
+
+  useLogStore.getState().addEntry(entry);
+
   const prefix = `[${entry.category}]`;
   switch (level) {
     case "debug":
