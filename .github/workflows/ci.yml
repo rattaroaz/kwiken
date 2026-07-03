@@ -63,7 +63,7 @@ jobs:
             arch_label: x64
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
-            arch_label: aarch64
+            arch_label: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -90,17 +90,7 @@ jobs:
 
       - name: Verify installer artifacts
         shell: pwsh
-        run: |
-          $bundleRoot = "src-tauri/target/${{ matrix.target }}/release/bundle"
-          if (-not (Test-Path $bundleRoot)) {
-            $bundleRoot = "src-tauri/target/release/bundle"
-          }
-          $nsis = Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*${{ matrix.arch_label }}*.exe" -ErrorAction SilentlyContinue
-          $msi = Get-ChildItem -Path "$bundleRoot/msi" -Filter "*${{ matrix.arch_label }}*.msi" -ErrorAction SilentlyContinue
-          if (-not $nsis) { Write-Error "NSIS installer not found for ${{ matrix.arch_label }}"; exit 1 }
-          if (-not $msi) { Write-Error "MSI installer not found for ${{ matrix.arch_label }}"; exit 1 }
-          Write-Host "Found NSIS: $($nsis[0].FullName)"
-          Write-Host "Found MSI: $($msi[0].FullName)"
+        run: ./scripts/verify-windows-bundle.ps1 -TargetTriple ${{ matrix.target }} -ArchLabel ${{ matrix.arch_label }}
 
       - name: Smoke test (real binary startup)
         run: node scripts/smoke-test.mjs

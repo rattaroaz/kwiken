@@ -24,7 +24,7 @@ jobs:
             arch_label: x64
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
-            arch_label: aarch64
+            arch_label: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -122,16 +122,4 @@ jobs:
 
       - name: Verify installer artifacts
         shell: pwsh
-        run: |
-          $nsis = Get-ChildItem -Path src-tauri/target/${{ matrix.target }}/release/bundle/nsis -Filter "*${{ matrix.arch_label }}*.exe" -ErrorAction SilentlyContinue
-          if (-not $nsis) {
-            $nsis = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter "*${{ matrix.arch_label }}*.exe" -ErrorAction SilentlyContinue
-          }
-          $msi = Get-ChildItem -Path src-tauri/target/${{ matrix.target }}/release/bundle/msi -Filter "*${{ matrix.arch_label }}*.msi" -ErrorAction SilentlyContinue
-          if (-not $msi) {
-            $msi = Get-ChildItem -Path src-tauri/target/release/bundle/msi -Filter "*${{ matrix.arch_label }}*.msi" -ErrorAction SilentlyContinue
-          }
-          if (-not $nsis) { Write-Error "NSIS installer not found for ${{ matrix.arch_label }}"; exit 1 }
-          if (-not $msi) { Write-Error "MSI installer not found for ${{ matrix.arch_label }}"; exit 1 }
-          Write-Host "Found NSIS: $($nsis[0].FullName)"
-          Write-Host "Found MSI: $($msi[0].FullName)"
+        run: ./scripts/verify-windows-bundle.ps1 -TargetTriple ${{ matrix.target }} -ArchLabel ${{ matrix.arch_label }}
