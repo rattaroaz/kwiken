@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { countLogErrors, getFilteredLogs } from "./logStore";
+import { countLogErrors, getFilteredLogs, useLogStore } from "./logStore";
 import { makeLogEntry } from "@/test/helpers";
+
+describe("useLogStore", () => {
+  it("opens and closes the panel", () => {
+    useLogStore.setState({ panelOpen: false });
+    useLogStore.getState().openPanel();
+    expect(useLogStore.getState().panelOpen).toBe(true);
+    useLogStore.getState().closePanel();
+    expect(useLogStore.getState().panelOpen).toBe(false);
+  });
+
+  it("adds entries and trims to max capacity", () => {
+    useLogStore.setState({ entries: [] });
+    for (let i = 0; i < 505; i += 1) {
+      useLogStore.getState().addEntry(makeLogEntry({ message: `entry-${i}` }));
+    }
+    expect(useLogStore.getState().entries).toHaveLength(500);
+    expect(useLogStore.getState().entries[0]?.message).toBe("entry-5");
+  });
+
+  it("updates level filter and clears logs", () => {
+    useLogStore.setState({ entries: [makeLogEntry()], levelFilter: "all" });
+    useLogStore.getState().setLevelFilter("error");
+    expect(useLogStore.getState().levelFilter).toBe("error");
+    useLogStore.getState().clearLogs();
+    expect(useLogStore.getState().entries).toHaveLength(0);
+  });
+});
 
 describe("getFilteredLogs", () => {
   const entries = [

@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LogPanel from "./LogPanel";
@@ -41,6 +41,17 @@ describe("LogPanel", () => {
     render(<LogPanel />);
     await user.click(screen.getByTestId("log-clear"));
     expect(useLogStore.getState().entries).toHaveLength(0);
+  });
+
+  it("copies filtered logs to clipboard", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    render(<LogPanel />);
+    await user.click(screen.getByTestId("log-copy"));
+    expect(writeText).toHaveBeenCalled();
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 
   it("returns null when panel is closed", () => {

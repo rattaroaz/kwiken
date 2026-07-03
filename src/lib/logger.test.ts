@@ -63,4 +63,17 @@ describe("logger integration with logStore", () => {
       expect(entries).toHaveLength(0);
     }
   });
+
+  it("logs across all categories", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    logger.db.error("db failure");
+    logger.import.warn("import warning");
+    logger.update.info("update info");
+    logger.security.warn("security warning");
+    const messages = useLogStore.getState().entries.map((e) => e.message);
+    expect(messages).toEqual(
+      expect.arrayContaining(["db failure", "import warning", "update info", "security warning"]),
+    );
+  });
 });
