@@ -275,7 +275,7 @@ INTEGRATION TESTS
 [x] Full transaction lifecycle (create ? edit ? reconcile ? delete)
 [x] Transfer sync between accounts
 [x] Import ? duplicate detection ? commit flow
-[ ] Backup and restore round-trip
+[x] Backup and restore round-trip
 
 E2E TESTS (Playwright)
 [x] First-run account setup wizard
@@ -283,6 +283,9 @@ E2E TESTS (Playwright)
 [x] Run spending report with known data
 [x] Settings persist across restart
 [x] Update check flow (mocked)
+[x] Import flow (E2E)
+[x] Lock screen flow (E2E)
+[x] Real binary smoke test in CI
 
 MANUAL QA CHECKLIST
 [x] Documented in docs/qa-checklist.md

@@ -43,7 +43,6 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 export const db = {
   initApp: () => call<AppInitStatus>("init_app"),
   markCleanShutdown: () => call<void>("mark_clean_shutdown_cmd"),
-  getSchemaVersion: () => call<number>("get_schema_version"),
 
   listAccounts: (includeArchived = false) =>
     call<Account[]>("list_accounts", { includeArchived }),
@@ -230,7 +229,6 @@ export const db = {
   restoreDatabase: (srcPath: string) => call<void>("restore_database", { srcPath }),
 
   setMasterPassword: (password: string) => call<void>("set_master_password", { password }),
-  verifyMasterPassword: (password: string) => call<boolean>("verify_master_password", { password }),
   hasMasterPassword: () => call<boolean>("has_master_password"),
   lockApp: () => call<void>("lock_app"),
   unlockApp: (password: string) => call<boolean>("unlock_app", { password }),

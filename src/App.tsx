@@ -63,6 +63,10 @@ export default function App() {
         setSettings({ ...DEFAULT_SETTINGS, ...settings });
         setTheme((settings.theme ?? "system") as Theme);
         applyTheme((settings.theme ?? "system") as Theme);
+        const hasPw = await db.hasMasterPassword();
+        setHasMasterPassword(hasPw);
+        const locked = await db.isAppLocked();
+        setLocked(locked);
         setInitialized(true, status.has_accounts);
         return;
       }

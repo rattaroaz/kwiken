@@ -1,7 +1,7 @@
 {
   "name": "kwiken",
   "private": true,
-  "version": "2.0.2",
+  "version": "2.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,6 +16,8 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "test:full": "npm run test:all && npm run test:e2e",
     "build:win": "node scripts/tauri-build.mjs",
     "build:win:signed": "node scripts/tauri-build.mjs --signed"
   },
@@ -27,7 +29,6 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "clsx": "^2.1.1",
-    "date-fns": "^4.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.3",

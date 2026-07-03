@@ -10,10 +10,10 @@ const keyPath = resolve(root, "scripts/tauri-signing.key");
 
 function runTauri(args) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("npm", ["run", "tauri", "build", "--", ...args], {
+    const tauriCli = resolve(root, "node_modules/@tauri-apps/cli/tauri.js");
+    const child = spawn(process.execPath, [tauriCli, "build", ...args], {
       cwd: root,
       stdio: "inherit",
-      shell: true,
       env: process.env,
     });
     child.on("close", (code) => {

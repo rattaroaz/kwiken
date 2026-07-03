@@ -392,13 +392,6 @@ pub fn mark_clean_shutdown_cmd(state: State<AppState>) -> Result<(), String> {
     mark_clean_shutdown(&conn)
 }
 
-#[tauri::command]
-pub fn get_schema_version(state: State<AppState>) -> Result<i32, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    conn.query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
-        .map_err(db_err)
-}
-
 // ── ACCOUNTS ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -2790,7 +2783,7 @@ pub fn commit_ofx_import(
 pub fn backup_database(app: tauri::AppHandle, dest_path: String) -> Result<(), String> {
     let dest = validate_file_path(&dest_path)?;
     let src = crate::db::db_path(&app)?;
-    std::fs::copy(&src, &dest).map_err(|e| format!("Backup failed: {e}"))?;
+    crate::db::backup_database_file(&src, &dest)?;
     log::info!("Database backed up to {}", dest.display());
     Ok(())
 }
@@ -2798,11 +2791,8 @@ pub fn backup_database(app: tauri::AppHandle, dest_path: String) -> Result<(), S
 #[tauri::command]
 pub fn restore_database(app: tauri::AppHandle, src_path: String) -> Result<(), String> {
     let src = validate_file_path(&src_path)?;
-    if !src.exists() {
-        return Err("Source database file not found".into());
-    }
     let dest = crate::db::db_path(&app)?;
-    std::fs::copy(&src, &dest).map_err(|e| format!("Restore failed: {e}"))?;
+    crate::db::restore_database_file(&src, &dest)?;
     log::warn!("Database restored from {}", src.display());
     Ok(())
 }
@@ -2851,12 +2841,6 @@ pub fn set_master_password(state: State<AppState>, password: String) -> Result<(
     )
     .map_err(db_err)?;
     Ok(())
-}
-
-#[tauri::command]
-pub fn verify_master_password(state: State<AppState>, password: String) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    verify_password_internal(&conn, &password)
 }
 
 #[tauri::command]

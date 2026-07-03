@@ -4,6 +4,25 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-02
+
+### Added
+
+- E2E tests for CSV import and lock-screen flows; expanded Tauri plugin mocks.
+- Page and component smoke tests; broader Vitest coverage thresholds.
+- CI smoke job: build installers and verify real binary startup.
+- Rust backup/restore round-trip tests; `open_connection_at_path` helper.
+- `scripts/smoke-test.mjs` and `scripts/qa-automated.ps1`.
+
+### Changed
+
+- E2E init checks lock state; QA checklist marks automated vs manual items.
+
+### Removed
+
+- Unused lib modules (`balance`, `budget`, `categories`) and redundant API commands.
+- Unused `date-fns` dependency.
+
 ## [2.0.2] - 2026-07-02
 
 ### Fixed
@@ -66,7 +85,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.1.0
 [2.0.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.2
 [2.0.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.1
 [2.0.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.0

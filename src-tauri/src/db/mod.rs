@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result as SqlResult};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tauri::Manager;
 
@@ -176,7 +176,12 @@ pub fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 pub fn open_connection(app: &AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
-    let conn = Connection::open(&path).map_err(|e| format!("Database open failed: {e}"))?;
+    open_connection_at_path(&path)
+}
+
+/// Opens (or creates) a SQLite database at `path`, applies pragmas and migrations.
+pub fn open_connection_at_path(path: &Path) -> Result<Connection, String> {
+    let conn = Connection::open(path).map_err(|e| format!("Database open failed: {e}"))?;
     conn.execute("PRAGMA foreign_keys = ON", [])
         .map_err(|e| format!("Database pragma failed: {e}"))?;
     // journal_mode returns a row; use pragma_update instead of execute.
@@ -184,6 +189,24 @@ pub fn open_connection(app: &AppHandle) -> Result<Connection, String> {
         .map_err(|e| format!("Database pragma failed: {e}"))?;
     run_migrations(&conn)?;
     Ok(conn)
+}
+
+pub fn backup_database_file(source: &Path, dest: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Err("Source database file not found".into());
+    }
+    std::fs::copy(source, dest)
+        .map(|_| ())
+        .map_err(|e| format!("Backup failed: {e}"))
+}
+
+pub fn restore_database_file(source: &Path, dest: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Err("Source database file not found".into());
+    }
+    std::fs::copy(source, dest)
+        .map(|_| ())
+        .map_err(|e| format!("Restore failed: {e}"))
 }
 
 pub fn check_integrity(conn: &Connection) -> bool {
@@ -410,18 +433,51 @@ mod tests {
     }
 
     #[test]
-    fn wal_journal_mode_can_be_enabled() {
-        let path = std::env::temp_dir().join(format!("kwiken-wal-test-{}.db", new_id()));
-        let conn = Connection::open(&path).expect("open temp db");
-        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
-        conn.pragma_update(None, "journal_mode", "WAL")
-            .expect("enable WAL");
+    fn open_connection_at_path_applies_wal_and_migrations() {
+        let path = std::env::temp_dir().join(format!("kwiken-open-test-{}.db", new_id()));
+        let conn = open_connection_at_path(&path).expect("open at path");
         let mode: String = conn
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
-            .expect("read journal_mode");
+            .expect("journal_mode");
         assert_eq!(mode.to_lowercase(), "wal");
+        let version: i32 = conn
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
+            .expect("schema version");
+        assert!(version >= 1);
         drop(conn);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn backup_and_restore_round_trip() {
+        let dir = std::env::temp_dir().join(format!("kwiken-backup-test-{}", new_id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let live = dir.join("kwiken.db");
+        let backup = dir.join("backup.db");
+        let restored = dir.join("restored.db");
+
+        {
+            let conn = open_connection_at_path(&live).expect("open live db");
+            conn.execute(
+                "INSERT INTO accounts (id, name, account_type, currency, opening_balance, is_archived, created_at)
+                 VALUES ('acct-1', 'Backup Test', 'checking', 'USD', 500.0, 0, '2024-01-01')",
+                [],
+            )
+            .expect("seed account");
+        }
+
+        backup_database_file(&live, &backup).expect("backup");
+        assert!(backup.exists());
+
+        restore_database_file(&backup, &restored).expect("restore");
+        let conn = Connection::open(&restored).expect("open restored");
+        let name: String = conn
+            .query_row("SELECT name FROM accounts WHERE id = 'acct-1'", [], |r| r.get(0))
+            .expect("restored row");
+        assert_eq!(name, "Backup Test");
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

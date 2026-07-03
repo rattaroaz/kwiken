@@ -65,7 +65,9 @@ SQLite database is stored in the OS app data directory (`kwiken.db`). Schema mig
 | `npm run lint` | ESLint |
 | `npm run format` | Prettier |
 | `npm run test` | Vitest unit tests |
-| `npm run test:e2e` | Playwright browser E2E (updater flow) |
+| `npm run test:e2e` | Playwright browser E2E (mocked Tauri) |
+| `npm run test:smoke` | Launch real release binary; verify it stays running |
+| `npm run test:full` | Unit + Rust tests, then E2E |
 | `npm run build:win` | Unsigned Windows build (no updater artifacts) |
 | `npm run build:win:signed` | Signed Windows build with updater artifacts |
 
@@ -97,7 +99,7 @@ npm run tauri icon assets/app-icon.png
 
 ## Version
 
-Current version: **2.0.2** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
+Current version: **2.1.0** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
 
 ## License
 

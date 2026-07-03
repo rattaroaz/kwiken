@@ -38,6 +38,22 @@ interface E2EStore {
     category_type: string;
     is_tax_related: boolean;
   }>;
+  security: {
+    hasMasterPassword: boolean;
+    isLocked: boolean;
+    password: string;
+  };
+}
+
+function readSecurityOverride(): Partial<E2EStore["security"]> | null {
+  if (typeof sessionStorage === "undefined") return null;
+  const raw = sessionStorage.getItem("e2e-security");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Partial<E2EStore["security"]>;
+  } catch {
+    return null;
+  }
 }
 
 function getStore(): E2EStore {
@@ -51,13 +67,23 @@ function getStore(): E2EStore {
         { id: "cat-food", name: "Food & Dining", category_type: "expense", is_tax_related: false },
         { id: "cat-grocery", name: "Groceries", parent_id: "cat-food", category_type: "expense", is_tax_related: false },
       ],
+      security: {
+        hasMasterPassword: false,
+        isLocked: false,
+        password: "secret",
+      },
     };
     seedDefaultData(root.__kwikenE2EStore);
   }
+  const override = readSecurityOverride();
+  if (override) {
+    root.__kwikenE2EStore.security = {
+      ...root.__kwikenE2EStore.security,
+      ...override,
+    };
+  }
   return root.__kwikenE2EStore;
 }
-
-const store = getStore();
 
 function seedDefaultData(target: E2EStore) {
   if (target.accounts.length > 0) return;
@@ -92,6 +118,7 @@ function uid(): string {
 }
 
 function recalcBalances(accountId: string) {
+  const store = getStore();
   const account = store.accounts.find((a) => a.id === accountId);
   if (!account) return;
   const txs = store.transactions
@@ -105,7 +132,38 @@ function recalcBalances(accountId: string) {
   account.balance = balance;
 }
 
+interface ImportRowMock {
+  date: string;
+  amount: number;
+  payee?: string;
+  memo?: string;
+  category?: string;
+  is_duplicate: boolean;
+}
+
+function parseCsvPreview(content: string): ImportRowMock[] {
+  const lines = content.trim().split("\n");
+  if (lines.length === 0) return [];
+  const start = lines[0].toLowerCase().includes("date") ? 1 : 0;
+  const rows: ImportRowMock[] = [];
+  for (const line of lines.slice(start)) {
+    if (!line.trim()) continue;
+    const fields = line.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+    if (fields.length < 2) continue;
+    rows.push({
+      date: fields[0],
+      amount: Number(fields[1]),
+      payee: fields[2] || undefined,
+      memo: fields[3] || undefined,
+      category: fields[4] || undefined,
+      is_duplicate: false,
+    });
+  }
+  return rows;
+}
+
 function spendingByCategory(dateFrom: string, dateTo: string) {
+  const store = getStore();
   const totals = new Map<string, { category_id: string; category_name: string; amount: number }>();
   for (const tx of store.transactions) {
     if (tx.date < dateFrom || tx.date > dateTo || tx.amount >= 0) continue;
@@ -117,15 +175,8 @@ function spendingByCategory(dateFrom: string, dateTo: string) {
   return Array.from(totals.values());
 }
 
-export class Resource {
-  async close(): Promise<void> {}
-}
-
-export class Channel<T = unknown> {
-  onmessage: ((response: T) => void) | undefined;
-}
-
 export async function invoke<T>(cmd: string, args?: Json): Promise<T> {
+  const store = getStore();
   switch (cmd) {
     case "init_app":
       return {
@@ -147,8 +198,72 @@ export async function invoke<T>(cmd: string, args?: Json): Promise<T> {
     }
 
     case "has_master_password":
+      return store.security.hasMasterPassword as T;
+
     case "is_app_locked":
-      return false as T;
+      return store.security.isLocked as T;
+
+    case "unlock_app": {
+      const password = String(args?.password ?? "");
+      const ok = password === store.security.password;
+      if (ok) store.security.isLocked = false;
+      return ok as T;
+    }
+
+    case "lock_app":
+      store.security.isLocked = true;
+      return undefined as T;
+
+    case "set_master_password":
+      store.security.hasMasterPassword = true;
+      store.security.password = String(args?.password ?? store.security.password);
+      return undefined as T;
+
+    case "preview_csv_import": {
+      const content = String(args?.csvContent ?? "");
+      const accountId = String(args?.accountId ?? "");
+      const rows = parseCsvPreview(content);
+      for (const row of rows) {
+        row.is_duplicate = store.transactions.some(
+          (t) =>
+            t.account_id === accountId &&
+            t.date === row.date &&
+            Math.abs(t.amount - row.amount) < 0.001 &&
+            (t.payee_name ?? "") === (row.payee ?? ""),
+        );
+      }
+      const duplicate_count = rows.filter((r) => r.is_duplicate).length;
+      return { rows, total_rows: rows.length, duplicate_count } as T;
+    }
+
+    case "commit_csv_import": {
+      const rows = (args?.rows ?? []) as ImportRowMock[];
+      const accountId = String(args?.accountId ?? "");
+      let count = 0;
+      for (const row of rows) {
+        if (row.is_duplicate) continue;
+        store.transactions.push({
+          id: uid(),
+          account_id: accountId,
+          date: row.date,
+          amount: row.amount,
+          payee_name: row.payee,
+          category_name: row.category,
+          memo: row.memo,
+          cleared: false,
+          reconciled: false,
+          splits: [],
+          tags: [],
+        });
+        count += 1;
+      }
+      recalcBalances(accountId);
+      return count as T;
+    }
+
+    case "backup_database":
+    case "restore_database":
+      return undefined as T;
 
     case "list_accounts":
       return store.accounts.filter((a) => !a.is_archived) as T;

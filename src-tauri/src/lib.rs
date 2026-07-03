@@ -33,7 +33,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::init_app,
             commands::mark_clean_shutdown_cmd,
-            commands::get_schema_version,
             commands::list_accounts,
             commands::get_account,
             commands::create_account,
@@ -117,7 +116,6 @@ pub fn run() {
             commands::backup_database,
             commands::restore_database,
             commands::set_master_password,
-            commands::verify_master_password,
             commands::has_master_password,
             commands::lock_app,
             commands::unlock_app,
