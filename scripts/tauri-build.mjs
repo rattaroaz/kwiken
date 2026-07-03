@@ -14,13 +14,23 @@ const targetArgs =
     ? ["--target", process.argv[targetIdx + 1]]
     : [];
 
+function buildEnv() {
+  const env = { ...process.env };
+  if (process.platform === "win32" && env.PATH) {
+    env.PATH = env.PATH.split(";")
+      .filter((entry) => entry && !/[\\/]Git[\\/]usr[\\/]bin$/i.test(entry))
+      .join(";");
+  }
+  return env;
+}
+
 function runTauri(args) {
   return new Promise((resolvePromise, reject) => {
     const tauriCli = resolve(root, "node_modules/@tauri-apps/cli/tauri.js");
     const child = spawn(process.execPath, [tauriCli, "build", ...args], {
       cwd: root,
       stdio: "inherit",
-      env: process.env,
+      env: buildEnv(),
     });
     child.on("close", (code) => {
       if (code === 0) resolvePromise();

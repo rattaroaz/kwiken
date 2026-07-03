@@ -53,11 +53,25 @@ function findLlvmBin() {
   return candidates.find((dir) => existsSync(resolve(dir, "clang.exe"))) ?? null;
 }
 
+function isArm64Build() {
+  if (process.arch === "arm64") return true;
+  const targetIdx = args.indexOf("--target");
+  return targetIdx !== -1 && args[targetIdx + 1]?.includes("aarch64") === true;
+}
+
+function sanitizeWindowsEnv(baseEnv = process.env) {
+  const env = { ...baseEnv };
+  if (process.platform !== "win32" || !env.PATH) return env;
+  env.PATH = env.PATH.split(";")
+    .filter((entry) => entry && !/[\\/]Git[\\/]usr[\\/]bin$/i.test(entry))
+    .join(";");
+  return env;
+}
+
 function needsWindowsToolchain() {
-  return (
-    process.platform === "win32" &&
-    (!hasClangOnPath() || !process.env.VCINSTALLDIR)
-  );
+  if (process.platform !== "win32") return false;
+  if (process.env.GITHUB_ACTIONS === "true" && !isArm64Build()) return false;
+  return !hasClangOnPath() || !process.env.VCINSTALLDIR;
 }
 
 function runTauri(env) {
@@ -65,7 +79,7 @@ function runTauri(env) {
     const child = spawn(process.execPath, [tauriCli, ...args], {
       cwd: root,
       stdio: "inherit",
-      env,
+      env: sanitizeWindowsEnv(env),
     });
     child.on("close", (code) => {
       if (code === 0) resolvePromise();
@@ -77,9 +91,11 @@ function runTauri(env) {
 function runTauriViaCmd(vcvars, llvmBin) {
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const tauriArgs = args.map((a) => `"${a}"`).join(" ");
+  const cleanPath = sanitizeWindowsEnv().PATH ?? "";
   const command = [
+    `set "PATH=${cleanPath}"`,
     `call "${vcvars}" ${arch}`,
-    `set "PATH=${llvmBin};%PATH%"`,
+    ...(llvmBin ? [`set "PATH=${llvmBin};%PATH%"`] : []),
     `cd /d "${root}"`,
     `"${process.execPath}" "${tauriCli}" ${tauriArgs}`,
   ].join(" && ");
@@ -100,7 +116,7 @@ function runTauriViaCmd(vcvars, llvmBin) {
 try {
   if (needsWindowsToolchain()) {
     const vcvars = findVsVarsAll();
-    const llvmBin = findLlvmBin();
+    const llvmBin = isArm64Build() ? findLlvmBin() : null;
 
     if (!vcvars) {
       console.error(
@@ -108,7 +124,7 @@ try {
       );
       process.exit(1);
     }
-    if (!llvmBin) {
+    if (isArm64Build() && !llvmBin) {
       console.error(
         "LLVM/clang not found. On ARM64 Windows it is required for Rust builds.\nInstall with: winget install LLVM.LLVM",
       );
@@ -119,6 +135,6 @@ try {
   } else {
     await runTauri(process.env);
   }
-} catch (err) {
-  process.exit(err.message?.includes("code") ? 1 : 1);
+} catch {
+  process.exit(1);
 }

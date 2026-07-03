@@ -99,7 +99,7 @@ npm run tauri icon assets/app-icon.png
 
 ## Version
 
-Current version: **2.2.2** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
+Current version: **2.2.3** (synced across `package.json`, `Cargo.toml`, `tauri.conf.json`).
 
 ## License
 

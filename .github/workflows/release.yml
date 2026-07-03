@@ -58,6 +58,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Prefer MSVC linker over Git link.exe
+        shell: pwsh
+        run: ./scripts/fix-windows-linker-path.ps1
+
       - name: Install LLVM (ARM64)
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: pwsh
