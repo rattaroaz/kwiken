@@ -4,6 +4,13 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-07-03
+
+### Fixed
+
+- ARM64 CI/release workflows install LLVM without winget on GitHub runners.
+- ARM64 installer verification matches Tauri `arm64` bundle naming and paths.
+
 ## [2.2.1] - 2026-07-03
 
 ### Added
@@ -110,7 +117,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.2
 [2.2.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.1
 [2.2.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.0
 [2.1.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.1.0
