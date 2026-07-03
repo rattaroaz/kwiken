@@ -80,9 +80,7 @@ jobs:
       - name: Install LLVM (ARM64)
         if: matrix.target == 'aarch64-pc-windows-msvc'
         shell: pwsh
-        run: |
-          winget install LLVM.LLVM --accept-package-agreements --accept-source-agreements
-          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+        run: ./scripts/install-llvm-ci.ps1
 
       - name: Install dependencies
         run: npm ci
