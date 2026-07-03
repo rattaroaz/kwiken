@@ -54,7 +54,17 @@ jobs:
           CI: true
 
   smoke:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch_label: x64
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            arch_label: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,24 +74,38 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install LLVM (ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          winget install LLVM.LLVM --accept-package-agreements --accept-source-agreements
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build unsigned Windows installers
-        run: npm run build:win
+        run: npm run build:win -- --target ${{ matrix.target }}
 
       - name: Verify installer artifacts
         shell: pwsh
         run: |
-          $nsis = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *.exe -ErrorAction SilentlyContinue
-          $msi = Get-ChildItem -Path src-tauri/target/release/bundle/msi -Filter *.msi -ErrorAction SilentlyContinue
-          if (-not $nsis) { Write-Error "NSIS installer not found"; exit 1 }
-          if (-not $msi) { Write-Error "MSI installer not found"; exit 1 }
+          $bundleRoot = "src-tauri/target/${{ matrix.target }}/release/bundle"
+          if (-not (Test-Path $bundleRoot)) {
+            $bundleRoot = "src-tauri/target/release/bundle"
+          }
+          $nsis = Get-ChildItem -Path "$bundleRoot/nsis" -Filter "*${{ matrix.arch_label }}*.exe" -ErrorAction SilentlyContinue
+          $msi = Get-ChildItem -Path "$bundleRoot/msi" -Filter "*${{ matrix.arch_label }}*.msi" -ErrorAction SilentlyContinue
+          if (-not $nsis) { Write-Error "NSIS installer not found for ${{ matrix.arch_label }}"; exit 1 }
+          if (-not $msi) { Write-Error "MSI installer not found for ${{ matrix.arch_label }}"; exit 1 }
           Write-Host "Found NSIS: $($nsis[0].FullName)"
           Write-Host "Found MSI: $($msi[0].FullName)"
 
       - name: Smoke test (real binary startup)
         run: node scripts/smoke-test.mjs
         env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
           SMOKE_STARTUP_MS: 5000

@@ -4,6 +4,18 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-07-03
+
+### Added
+
+- Windows ARM64 (`aarch64`) release and CI builds alongside existing x64 builds.
+- `--target` flag support in `scripts/tauri-build.mjs` for cross-architecture local builds.
+
+### Changed
+
+- Release and CI smoke workflows use a matrix (`windows-latest` + `windows-11-arm`).
+- Smoke test script respects `CARGO_BUILD_TARGET` for non-default Rust output paths.
+
 ## [2.2.0] - 2026-07-02
 
 ### Added
@@ -98,7 +110,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.1
 [2.2.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.0
 [2.1.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.1.0
 [2.0.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.2

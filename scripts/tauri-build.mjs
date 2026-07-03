@@ -8,6 +8,12 @@ const root = resolve(__dirname, "..");
 const signedFlag = process.argv.includes("--signed");
 const keyPath = resolve(root, "scripts/tauri-signing.key");
 
+const targetIdx = process.argv.indexOf("--target");
+const targetArgs =
+  targetIdx !== -1 && process.argv[targetIdx + 1]
+    ? ["--target", process.argv[targetIdx + 1]]
+    : [];
+
 function runTauri(args) {
   return new Promise((resolvePromise, reject) => {
     const tauriCli = resolve(root, "node_modules/@tauri-apps/cli/tauri.js");
@@ -36,13 +42,14 @@ if (signedFlag || hasEnvKey) {
     );
   }
   console.log("Building signed release with updater artifacts…");
-  await runTauri(["--bundles", "nsis,msi"]);
+  await runTauri([...targetArgs, "--bundles", "nsis,msi"]);
 } else {
   console.log("Building unsigned (createUpdaterArtifacts disabled)…");
   console.log("For release-parity signed builds, run: npm run build:win:signed");
   await runTauri([
     "-c",
     JSON.stringify({ bundle: { createUpdaterArtifacts: false } }),
+    ...targetArgs,
     "--bundles",
     "nsis,msi",
   ]);

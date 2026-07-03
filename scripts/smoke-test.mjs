@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
-const exe = resolve(root, "src-tauri/target/release/kwiken.exe");
+const target = process.env.CARGO_BUILD_TARGET;
+const exe = target
+  ? resolve(root, `src-tauri/target/${target}/release/kwiken.exe`)
+  : resolve(root, "src-tauri/target/release/kwiken.exe");
 const startupMs = Number(process.env.SMOKE_STARTUP_MS ?? 5000);
 
 if (!existsSync(exe)) {

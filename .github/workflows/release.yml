@@ -15,7 +15,17 @@ permissions:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch_label: x64
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            arch_label: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +55,15 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install LLVM (ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          winget install LLVM.LLVM --accept-package-agreements --accept-source-agreements
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
 
       - name: Enable VBScript for WiX MSI
         shell: pwsh
@@ -101,11 +120,20 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          args: --bundles nsis,msi
+          args: --target ${{ matrix.target }} --bundles nsis,msi
 
-      - name: Verify MSI artifact
+      - name: Verify installer artifacts
         shell: pwsh
         run: |
-          $msi = Get-ChildItem -Path src-tauri/target/release/bundle/msi -Filter *.msi -ErrorAction SilentlyContinue
-          if (-not $msi) { Write-Error "MSI artifact not found"; exit 1 }
-          Write-Host "Found MSI: $($msi.FullName)"
+          $nsis = Get-ChildItem -Path src-tauri/target/${{ matrix.target }}/release/bundle/nsis -Filter "*${{ matrix.arch_label }}*.exe" -ErrorAction SilentlyContinue
+          if (-not $nsis) {
+            $nsis = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter "*${{ matrix.arch_label }}*.exe" -ErrorAction SilentlyContinue
+          }
+          $msi = Get-ChildItem -Path src-tauri/target/${{ matrix.target }}/release/bundle/msi -Filter "*${{ matrix.arch_label }}*.msi" -ErrorAction SilentlyContinue
+          if (-not $msi) {
+            $msi = Get-ChildItem -Path src-tauri/target/release/bundle/msi -Filter "*${{ matrix.arch_label }}*.msi" -ErrorAction SilentlyContinue
+          }
+          if (-not $nsis) { Write-Error "NSIS installer not found for ${{ matrix.arch_label }}"; exit 1 }
+          if (-not $msi) { Write-Error "MSI installer not found for ${{ matrix.arch_label }}"; exit 1 }
+          Write-Host "Found NSIS: $($nsis[0].FullName)"
+          Write-Host "Found MSI: $($msi[0].FullName)"
