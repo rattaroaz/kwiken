@@ -83,6 +83,7 @@ pub fn run() {
             commands::list_auto_rules,
             commands::create_auto_rule,
             commands::delete_auto_rule,
+            commands::apply_auto_rules_to_transactions,
             commands::list_saved_filters,
             commands::create_saved_filter,
             commands::delete_saved_filter,

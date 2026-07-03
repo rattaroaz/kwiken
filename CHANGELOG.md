@@ -4,6 +4,19 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-02
+
+### Added
+
+- Search everywhere in the command palette (pages, accounts, payees, categories, transactions).
+- Transaction attachment support: add, open, reveal in folder, and remove receipts/documents.
+- Expanded auto-categorize rules engine with match field/type, priority, enabled flag, and bulk apply.
+
+### Changed
+
+- Application log panel moved to the right side of the window.
+- Native select and date inputs use dark backgrounds for readability.
+
 ## [2.1.0] - 2026-07-02
 
 ### Added
@@ -85,7 +98,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.0
 [2.1.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.1.0
 [2.0.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.2
 [2.0.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.1

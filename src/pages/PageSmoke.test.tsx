@@ -61,8 +61,18 @@ const mocks = vi.hoisted(() => {
       updateCategory: vi.fn(async () => category),
       deleteCategory: vi.fn(async () => undefined),
       listAutoRules: vi.fn(async () => []),
-      createAutoRule: vi.fn(async () => ({ id: "rule-1", pattern: "coffee", category_id: category.id })),
+      createAutoRule: vi.fn(async () => ({
+        id: "rule-1",
+        pattern: "coffee",
+        category_id: category.id,
+        category_name: category.name,
+        target_field: "payee",
+        match_type: "contains",
+        priority: 100,
+        enabled: true,
+      })),
       deleteAutoRule: vi.fn(async () => undefined),
+      applyAutoRulesToTransactions: vi.fn(async () => 0),
       getAccountRegister: vi.fn(async () => ({
         account,
         transactions: [transaction],
@@ -147,6 +157,14 @@ const mocks = vi.hoisted(() => {
       setMasterPassword: vi.fn(async () => undefined),
       lockApp: vi.fn(async () => undefined),
       createTransaction: vi.fn(async () => transaction),
+      updateTransaction: vi.fn(async () => transaction),
+      listAttachments: vi.fn(async () => []),
+      addAttachment: vi.fn(async () => ({
+        id: "att-1",
+        transaction_id: transaction.id,
+        file_path: "C:\\e2e\\receipt.pdf",
+      })),
+      deleteAttachment: vi.fn(async () => undefined),
     },
   };
 });
@@ -162,6 +180,8 @@ vi.mock("@tauri-apps/plugin-fs", () => ({
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => undefined),
+  openPath: vi.fn(async () => undefined),
+  revealItemInDir: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/services/updateService", () => ({

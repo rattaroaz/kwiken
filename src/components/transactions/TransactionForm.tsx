@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import Modal from "@/components/common/Modal";
 import { db } from "@/services/db";
 import { todayIso } from "@/lib/utils";
 import { useUiStore } from "@/stores/index";
-import type { Category, CreateSplit, CreateTransaction, Tag, Transaction } from "@/shared/types";
+import type { Attachment, Category, CreateSplit, CreateTransaction, Tag, Transaction } from "@/shared/types";
 
 interface TransactionFormProps {
   open: boolean;
@@ -17,6 +19,19 @@ interface SplitRow {
   category_id: string;
   amount: string;
   memo: string;
+}
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+function mimeTypeFor(path: string): string | undefined {
+  const ext = path.split(".").pop()?.toLowerCase();
+  if (!ext) return undefined;
+  if (["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) return `image/${ext === "jpg" ? "jpeg" : ext}`;
+  if (ext === "pdf") return "application/pdf";
+  if (["csv", "txt"].includes(ext)) return "text/plain";
+  return undefined;
 }
 
 export default function TransactionForm({
@@ -37,9 +52,12 @@ export default function TransactionForm({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const setHasUnsavedChanges = useUiStore((s) => s.setHasUnsavedChanges);
+  const addToast = useUiStore((s) => s.addToast);
 
   useEffect(() => {
     if (!open) {
@@ -60,6 +78,17 @@ export default function TransactionForm({
     db.listCategories().then(setCategories).catch(() => {});
     db.listTags().then(setTags).catch(() => {});
   }, [open]);
+
+  const loadAttachments = async (transactionId: string) => {
+    setAttachmentsLoading(true);
+    try {
+      setAttachments(await db.listAttachments(transactionId));
+    } catch {
+      setAttachments([]);
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -83,7 +112,8 @@ export default function TransactionForm({
         setUseSplits(false);
         setSplits([{ category_id: "", amount: "", memo: "" }]);
       }
-      setSelectedTagIds([]);
+      setSelectedTagIds(transaction.tags);
+      void loadAttachments(transaction.id);
     } else {
       setDate(todayIso());
       setPayeeName("");
@@ -94,6 +124,7 @@ export default function TransactionForm({
       setUseSplits(false);
       setSplits([{ category_id: "", amount: "", memo: "" }]);
       setSelectedTagIds([]);
+      setAttachments([]);
     }
     setError("");
   }, [open, transaction]);
@@ -153,6 +184,40 @@ export default function TransactionForm({
     setSelectedTagIds((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id],
     );
+  };
+
+  const addAttachment = async () => {
+    if (!transaction) return;
+    const selected = await openDialog({
+      multiple: true,
+      filters: [
+        { name: "Receipts and documents", extensions: ["pdf", "png", "jpg", "jpeg", "webp", "csv", "txt"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+    if (paths.length === 0) return;
+
+    try {
+      for (const path of paths) {
+        await db.addAttachment(transaction.id, path, mimeTypeFor(path));
+      }
+      await loadAttachments(transaction.id);
+      addToast("success", paths.length === 1 ? "Attachment added" : `${paths.length} attachments added`);
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "Failed to add attachment");
+    }
+  };
+
+  const removeAttachment = async (attachment: Attachment) => {
+    if (!transaction) return;
+    try {
+      await db.deleteAttachment(attachment.id);
+      await loadAttachments(transaction.id);
+      addToast("success", "Attachment removed");
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "Failed to remove attachment");
+    }
   };
 
   return (
@@ -323,6 +388,54 @@ export default function TransactionForm({
             </div>
           </div>
         )}
+
+        <div className="rounded-md border border-border p-3">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Attachments</p>
+              <p className="text-xs text-muted-foreground">
+                Receipts, invoices, statements, or other files linked to this transaction.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={addAttachment}
+              disabled={!transaction}
+              className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              + Attach file
+            </button>
+          </div>
+          {!transaction ? (
+            <p className="text-xs text-muted-foreground">Save the transaction before adding attachments.</p>
+          ) : attachmentsLoading ? (
+            <p className="text-xs text-muted-foreground">Loading attachments…</p>
+          ) : attachments.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No attachments yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {attachments.map((attachment) => (
+                <li key={attachment.id} className="flex items-center justify-between gap-3 rounded border border-border px-2 py-1.5 text-xs">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{fileName(attachment.file_path)}</p>
+                    <p className="truncate text-muted-foreground">{attachment.file_path}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button type="button" onClick={() => openPath(attachment.file_path)} className="text-primary hover:underline">
+                      Open
+                    </button>
+                    <button type="button" onClick={() => revealItemInDir(attachment.file_path)} className="text-primary hover:underline">
+                      Show
+                    </button>
+                    <button type="button" onClick={() => removeAttachment(attachment)} className="text-destructive hover:underline">
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={cleared} onChange={(e) => setCleared(e.target.checked)} className="rounded" />

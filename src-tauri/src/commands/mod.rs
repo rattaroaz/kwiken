@@ -1,5 +1,5 @@
 use crate::db::{
-    account_balance, apply_auto_category, check_integrity, detect_unclean_shutdown,
+    account_balance, apply_auto_category, auto_rule_matches, check_integrity, detect_unclean_shutdown,
     ensure_payee, mark_clean_shutdown, new_id, now_iso, seed_default_categories,
     validate_file_path,
 };
@@ -161,13 +161,14 @@ fn delete_transaction_children(conn: &Connection, transaction_id: &str) -> Resul
 fn resolve_category(
     conn: &Connection,
     payee_name: &Option<String>,
+    memo: &Option<String>,
     category_id: &Option<String>,
 ) -> Result<Option<String>, String> {
     if category_id.is_some() {
         return Ok(category_id.clone());
     }
     if let Some(name) = payee_name {
-        return Ok(apply_auto_category(conn, name));
+        return Ok(apply_auto_category(conn, name, memo.as_deref()));
     }
     Ok(None)
 }
@@ -320,7 +321,7 @@ fn create_transaction_internal(
     } else {
         None
     };
-    let category_id = resolve_category(conn, &input.payee_name, &input.category_id)?;
+    let category_id = resolve_category(conn, &input.payee_name, &input.memo, &input.category_id)?;
     let id = new_id();
     conn.execute(
         "INSERT INTO transactions
@@ -977,7 +978,7 @@ pub fn update_transaction(
     } else {
         None
     };
-    let category_id = resolve_category(&conn, &input.payee_name, &input.category_id)?;
+    let category_id = resolve_category(&conn, &input.payee_name, &input.memo, &input.category_id)?;
     let updated = conn
         .execute(
             "UPDATE transactions SET account_id = ?2, date = ?3, payee_id = ?4, category_id = ?5,
@@ -1737,10 +1738,11 @@ pub fn list_auto_rules(state: State<AppState>) -> Result<Vec<AutoCategorizeRule>
     let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
     let mut stmt = conn
         .prepare(
-            "SELECT r.id, r.pattern, r.category_id, c.name
+            "SELECT r.id, r.pattern, r.category_id, c.name, r.target_field, r.match_type,
+                    r.priority, r.enabled
              FROM auto_categorize_rules r
              INNER JOIN categories c ON c.id = r.category_id
-             ORDER BY r.pattern",
+             ORDER BY r.enabled DESC, r.priority ASC, r.pattern ASC",
         )
         .map_err(db_err)?;
     let rules = stmt
@@ -1750,6 +1752,10 @@ pub fn list_auto_rules(state: State<AppState>) -> Result<Vec<AutoCategorizeRule>
                 pattern: row.get(1)?,
                 category_id: row.get(2)?,
                 category_name: row.get(3)?,
+                target_field: row.get(4)?,
+                match_type: row.get(5)?,
+                priority: row.get(6)?,
+                enabled: bool_from_i(row.get(7)?),
             })
         })
         .map_err(db_err)?
@@ -1763,12 +1769,18 @@ pub fn create_auto_rule(
     state: State<AppState>,
     pattern: String,
     category_id: String,
+    target_field: String,
+    match_type: String,
+    priority: i32,
+    enabled: bool,
 ) -> Result<AutoCategorizeRule, String> {
     let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
     let id = new_id();
     conn.execute(
-        "INSERT INTO auto_categorize_rules (id, pattern, category_id) VALUES (?1, ?2, ?3)",
-        params![id, pattern, category_id],
+        "INSERT INTO auto_categorize_rules
+         (id, pattern, category_id, target_field, match_type, priority, enabled)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, pattern, category_id, target_field, match_type, priority, enabled as i32],
     )
     .map_err(db_err)?;
     let category_name: String = conn
@@ -1783,6 +1795,10 @@ pub fn create_auto_rule(
         pattern,
         category_id,
         category_name,
+        target_field,
+        match_type,
+        priority,
+        enabled,
     })
 }
 
@@ -1792,6 +1808,71 @@ pub fn delete_auto_rule(state: State<AppState>, id: String) -> Result<(), String
     conn.execute("DELETE FROM auto_categorize_rules WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let mut rule_stmt = conn
+        .prepare(
+            "SELECT pattern, category_id, target_field, match_type
+             FROM auto_categorize_rules
+             WHERE enabled = 1
+             ORDER BY priority ASC, pattern ASC",
+        )
+        .map_err(db_err)?;
+    let rules = rule_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(db_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_err)?;
+
+    let mut tx_stmt = conn
+        .prepare(
+            "SELECT t.id, COALESCE(p.name, ''), t.memo, t.category_id
+             FROM transactions t
+             LEFT JOIN payees p ON p.id = t.payee_id
+             WHERE NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id)",
+        )
+        .map_err(db_err)?;
+    let transactions = tx_stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(db_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_err)?;
+
+    let mut updated = 0;
+    for (tx_id, payee_name, memo, current_category) in transactions {
+        if !overwrite && current_category.is_some() {
+            continue;
+        }
+        for (pattern, category_id, target_field, match_type) in &rules {
+            if auto_rule_matches(&target_field, &match_type, pattern, &payee_name, memo.as_deref()) {
+                conn.execute(
+                    "UPDATE transactions SET category_id = ?1 WHERE id = ?2",
+                    params![category_id, tx_id],
+                )
+                .map_err(db_err)?;
+                updated += 1;
+                break;
+            }
+        }
+    }
+    Ok(updated)
 }
 
 // ── SAVED FILTERS ─────────────────────────────────────────────────────────────

@@ -5,6 +5,9 @@ import { db } from "@/services/db";
 import { useUiStore } from "@/stores/index";
 import type { AutoCategorizeRule, Category } from "@/shared/types";
 
+type RuleTargetField = AutoCategorizeRule["target_field"];
+type RuleMatchType = AutoCategorizeRule["match_type"];
+
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [rules, setRules] = useState<AutoCategorizeRule[]>([]);
@@ -13,7 +16,21 @@ export default function CategoriesPage() {
   const [ruleModal, setRuleModal] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [catForm, setCatForm] = useState({ name: "", parent_id: "", category_type: "expense", is_tax_related: false });
-  const [ruleForm, setRuleForm] = useState({ pattern: "", category_id: "" });
+  const [ruleForm, setRuleForm] = useState<{
+    pattern: string;
+    category_id: string;
+    target_field: RuleTargetField;
+    match_type: RuleMatchType;
+    priority: string;
+    enabled: boolean;
+  }>({
+    pattern: "",
+    category_id: "",
+    target_field: "payee",
+    match_type: "contains",
+    priority: "100",
+    enabled: true,
+  });
 
   const addToast = useUiStore((s) => s.addToast);
   const showConfirm = useUiStore((s) => s.showConfirm);
@@ -96,14 +113,45 @@ export default function CategoriesPage() {
       return;
     }
     try {
-      await db.createAutoRule(ruleForm.pattern, ruleForm.category_id);
+      await db.createAutoRule(
+        ruleForm.pattern.trim(),
+        ruleForm.category_id,
+        ruleForm.target_field,
+        ruleForm.match_type,
+        parseInt(ruleForm.priority, 10) || 100,
+        ruleForm.enabled,
+      );
       addToast("success", "Rule created");
       setRuleModal(false);
-      setRuleForm({ pattern: "", category_id: "" });
+      setRuleForm({
+        pattern: "",
+        category_id: "",
+        target_field: "payee",
+        match_type: "contains",
+        priority: "100",
+        enabled: true,
+      });
       await load();
     } catch (e) {
       addToast("error", e instanceof Error ? e.message : "Failed to create rule");
     }
+  };
+
+  const applyRules = (overwrite: boolean) => {
+    showConfirm(
+      overwrite ? "Recategorize Transactions" : "Categorize Transactions",
+      overwrite
+        ? "Apply enabled rules to all non-split transactions, replacing existing categories?"
+        : "Apply enabled rules to uncategorized non-split transactions?",
+      async () => {
+        try {
+          const count = await db.applyAutoRulesToTransactions(overwrite);
+          addToast("success", `Updated ${count} transaction${count === 1 ? "" : "s"}`);
+        } catch (e) {
+          addToast("error", e instanceof Error ? e.message : "Failed to apply rules");
+        }
+      },
+    );
   };
 
   const deleteRule = (rule: AutoCategorizeRule) => {
@@ -167,10 +215,21 @@ export default function CategoriesPage() {
 
       <div>
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Auto-Categorize Rules</h2>
-          <button type="button" onClick={() => setRuleModal(true)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
-            + Add Rule
-          </button>
+          <div>
+            <h2 className="text-lg font-semibold">Auto-Categorize Rules</h2>
+            <p className="text-sm text-muted-foreground">Lower priority numbers run first. Disabled rules are skipped.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => applyRules(false)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+              Apply to uncategorized
+            </button>
+            <button type="button" onClick={() => applyRules(true)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
+              Reapply all
+            </button>
+            <button type="button" onClick={() => setRuleModal(true)} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+              + Add Rule
+            </button>
+          </div>
         </div>
         {rules.length === 0 ? (
           <p className="text-sm text-muted-foreground">No rules configured</p>
@@ -179,7 +238,13 @@ export default function CategoriesPage() {
             {rules.map((rule) => (
               <div key={rule.id} className="flex items-center justify-between px-4 py-3">
                 <div>
-                  <span className="font-mono text-sm">&quot;{rule.pattern}&quot;</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs">P{rule.priority}</span>
+                    {!rule.enabled && <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">Disabled</span>}
+                    <span className="text-xs text-muted-foreground">{rule.target_field.replace(/_/g, " ")}</span>
+                    <span className="text-xs text-muted-foreground">{rule.match_type.replace("_", " ")}</span>
+                    <span className="font-mono text-sm">&quot;{rule.pattern}&quot;</span>
+                  </div>
                   <span className="mx-2 text-muted-foreground">→</span>
                   <span className="text-sm">{rule.category_name}</span>
                 </div>
@@ -232,8 +297,34 @@ export default function CategoriesPage() {
         </div>
       }>
         <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Match field</label>
+              <select
+                value={ruleForm.target_field}
+                onChange={(e) => setRuleForm({ ...ruleForm, target_field: e.target.value as RuleTargetField })}
+                className="w-full rounded-md border border-input px-3 py-2 text-sm"
+              >
+                <option value="payee">Payee</option>
+                <option value="memo">Memo</option>
+                <option value="payee_or_memo">Payee or memo</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">Match type</label>
+              <select
+                value={ruleForm.match_type}
+                onChange={(e) => setRuleForm({ ...ruleForm, match_type: e.target.value as RuleMatchType })}
+                className="w-full rounded-md border border-input px-3 py-2 text-sm"
+              >
+                <option value="contains">Contains</option>
+                <option value="starts_with">Starts with</option>
+                <option value="equals">Equals</option>
+              </select>
+            </div>
+          </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">Payee contains</label>
+            <label className="mb-1 block text-sm font-medium">Pattern</label>
             <input type="text" value={ruleForm.pattern} onChange={(e) => setRuleForm({ ...ruleForm, pattern: e.target.value })} placeholder="e.g. Starbucks" className="w-full rounded-md border border-input px-3 py-2 text-sm" />
           </div>
           <div>
@@ -242,6 +333,26 @@ export default function CategoriesPage() {
               <option value="">Select category</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Priority</label>
+              <input
+                type="number"
+                value={ruleForm.priority}
+                onChange={(e) => setRuleForm({ ...ruleForm, priority: e.target.value })}
+                className="w-full rounded-md border border-input px-3 py-2 text-sm"
+              />
+            </div>
+            <label className="mt-7 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={ruleForm.enabled}
+                onChange={(e) => setRuleForm({ ...ruleForm, enabled: e.target.checked })}
+                className="rounded"
+              />
+              Enabled
+            </label>
           </div>
         </div>
       </Modal>

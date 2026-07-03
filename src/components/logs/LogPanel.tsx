@@ -85,7 +85,7 @@ export default function LogPanel() {
 
   return (
     <aside
-      className="flex h-full w-80 shrink-0 flex-col border-r border-border bg-card"
+      className="flex h-full w-80 shrink-0 flex-col border-l border-border bg-card"
       data-testid="log-panel"
     >
       <div className="flex items-center justify-between border-b border-border px-4 py-3">

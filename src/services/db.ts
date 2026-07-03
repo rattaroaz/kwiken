@@ -166,9 +166,25 @@ export const db = {
   deleteTag: (id: string) => call<void>("delete_tag", { id }),
 
   listAutoRules: () => call<AutoCategorizeRule[]>("list_auto_rules"),
-  createAutoRule: (pattern: string, categoryId: string) =>
-    call<AutoCategorizeRule>("create_auto_rule", { pattern, categoryId }),
+  createAutoRule: (
+    pattern: string,
+    categoryId: string,
+    targetField: AutoCategorizeRule["target_field"],
+    matchType: AutoCategorizeRule["match_type"],
+    priority: number,
+    enabled: boolean,
+  ) =>
+    call<AutoCategorizeRule>("create_auto_rule", {
+      pattern,
+      categoryId,
+      targetField,
+      matchType,
+      priority,
+      enabled,
+    }),
   deleteAutoRule: (id: string) => call<void>("delete_auto_rule", { id }),
+  applyAutoRulesToTransactions: (overwrite = false) =>
+    call<number>("apply_auto_rules_to_transactions", { overwrite }),
 
   listSavedFilters: () => call<SavedFilter[]>("list_saved_filters"),
   createSavedFilter: (name: string, accountId: string | null, filterJson: string) =>

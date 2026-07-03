@@ -145,6 +145,10 @@ pub struct AutoCategorizeRule {
     pub pattern: String,
     pub category_id: String,
     pub category_name: String,
+    pub target_field: String,
+    pub match_type: String,
+    pub priority: i32,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

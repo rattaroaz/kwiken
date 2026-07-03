@@ -27,10 +27,30 @@ interface MockTransaction {
   running_balance?: number;
 }
 
+interface MockAttachment {
+  id: string;
+  transaction_id: string;
+  file_path: string;
+  mime_type?: string;
+}
+
+interface MockRule {
+  id: string;
+  pattern: string;
+  category_id: string;
+  category_name: string;
+  target_field: "payee" | "memo" | "payee_or_memo";
+  match_type: "contains" | "starts_with" | "equals";
+  priority: number;
+  enabled: boolean;
+}
+
 interface E2EStore {
   settings: Record<string, string>;
   accounts: MockAccount[];
   transactions: MockTransaction[];
+  attachments: MockAttachment[];
+  rules: MockRule[];
   categories: Array<{
     id: string;
     name: string;
@@ -63,6 +83,8 @@ function getStore(): E2EStore {
       settings: { theme: "light", currency: "USD", date_format: "MM/dd/yyyy" },
       accounts: [],
       transactions: [],
+      attachments: [],
+      rules: [],
       categories: [
         { id: "cat-food", name: "Food & Dining", category_type: "expense", is_tax_related: false },
         { id: "cat-grocery", name: "Groceries", parent_id: "cat-food", category_type: "expense", is_tax_related: false },
@@ -160,6 +182,23 @@ function parseCsvPreview(content: string): ImportRowMock[] {
     });
   }
   return rows;
+}
+
+function ruleMatches(rule: MockRule, tx: MockTransaction): boolean {
+  const needle = rule.pattern.trim().toLowerCase();
+  const payee = (tx.payee_name ?? "").toLowerCase();
+  const memo = (tx.memo ?? "").toLowerCase();
+  const values =
+    rule.target_field === "memo"
+      ? [memo]
+      : rule.target_field === "payee_or_memo"
+        ? [payee, memo]
+        : [payee];
+  return values.some((value) => {
+    if (rule.match_type === "starts_with") return value.startsWith(needle);
+    if (rule.match_type === "equals") return value === needle;
+    return value.includes(needle);
+  });
 }
 
 function spendingByCategory(dateFrom: string, dateTo: string) {
@@ -317,9 +356,21 @@ export async function invoke<T>(cmd: string, args?: Json): Promise<T> {
 
     case "list_transactions": {
       const filter = (args?.filter ?? {}) as Json;
-      const accountId = String(filter.account_id ?? "");
-      recalcBalances(accountId);
-      return store.transactions.filter((t) => t.account_id === accountId) as T;
+      const accountId = filter.account_id ? String(filter.account_id) : "";
+      if (accountId) recalcBalances(accountId);
+      let txs = accountId
+        ? store.transactions.filter((t) => t.account_id === accountId)
+        : [...store.transactions];
+      if (filter.payee) {
+        const q = String(filter.payee).toLowerCase();
+        txs = txs.filter((t) => t.payee_name?.toLowerCase().includes(q));
+      }
+      if (filter.memo) {
+        const q = String(filter.memo).toLowerCase();
+        txs = txs.filter((t) => t.memo?.toLowerCase().includes(q));
+      }
+      const limit = Number(filter.limit ?? txs.length);
+      return txs.slice(0, limit) as T;
     }
 
     case "create_transaction": {
@@ -344,6 +395,72 @@ export async function invoke<T>(cmd: string, args?: Json): Promise<T> {
 
     case "list_categories":
       return store.categories as T;
+
+    case "search_payees": {
+      const query = String(args?.query ?? "").toLowerCase();
+      const limit = Number(args?.limit ?? 10);
+      const names = Array.from(new Set(store.transactions.map((tx) => tx.payee_name).filter(Boolean) as string[]));
+      return names
+        .filter((name) => name.toLowerCase().includes(query))
+        .slice(0, limit)
+        .map((name) => ({ id: name, name })) as T;
+    }
+
+    case "list_auto_rules":
+      return store.rules as T;
+
+    case "create_auto_rule": {
+      const categoryId = String(args?.categoryId ?? "");
+      const category = store.categories.find((c) => c.id === categoryId);
+      const rule: MockRule = {
+        id: uid(),
+        pattern: String(args?.pattern ?? ""),
+        category_id: categoryId,
+        category_name: category?.name ?? "Category",
+        target_field: (args?.targetField as MockRule["target_field"]) ?? "payee",
+        match_type: (args?.matchType as MockRule["match_type"]) ?? "contains",
+        priority: Number(args?.priority ?? 100),
+        enabled: Boolean(args?.enabled ?? true),
+      };
+      store.rules.push(rule);
+      return rule as T;
+    }
+
+    case "delete_auto_rule":
+      store.rules = store.rules.filter((rule) => rule.id !== String(args?.id ?? ""));
+      return undefined as T;
+
+    case "apply_auto_rules_to_transactions": {
+      const overwrite = Boolean(args?.overwrite);
+      let count = 0;
+      const rules = [...store.rules].filter((rule) => rule.enabled).sort((a, b) => a.priority - b.priority);
+      for (const tx of store.transactions) {
+        if (!overwrite && tx.category_name) continue;
+        const rule = rules.find((candidate) => ruleMatches(candidate, tx));
+        if (!rule) continue;
+        tx.category_name = rule.category_name;
+        count += 1;
+      }
+      return count as T;
+    }
+
+    case "add_attachment": {
+      const attachment: MockAttachment = {
+        id: uid(),
+        transaction_id: String(args?.transactionId ?? ""),
+        file_path: String(args?.filePath ?? ""),
+        mime_type: args?.mimeType ? String(args.mimeType) : undefined,
+      };
+      store.attachments.push(attachment);
+      return attachment as T;
+    }
+
+    case "list_attachments":
+      return store.attachments.filter((item) => item.transaction_id === String(args?.transactionId ?? "")) as T;
+
+    case "delete_attachment":
+      store.attachments = store.attachments.filter((item) => item.id !== String(args?.id ?? ""));
+      return undefined as T;
 
     case "get_spending_by_category": {
       const dateFrom = String(args?.dateFrom ?? args?.date_from ?? "");

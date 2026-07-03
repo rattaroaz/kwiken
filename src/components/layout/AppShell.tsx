@@ -31,7 +31,6 @@ export default function AppShell() {
   return (
     <div className="flex h-full">
       <Sidebar />
-      <LogPanel />
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="flex h-14 shrink-0 items-center justify-end border-b border-border px-4">
           <PrivacyToggle />
@@ -40,6 +39,7 @@ export default function AppShell() {
           <Outlet />
         </main>
       </div>
+      <LogPanel />
       <CommandPalette />
     </div>
   );

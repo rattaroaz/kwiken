@@ -137,6 +137,6 @@ describe("component smoke coverage", () => {
         <CommandPalette />
       </MemoryRouter>,
     );
-    expect(screen.getByPlaceholderText("Search pages…")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search pages, accounts, payees, categories, transactions…")).toBeInTheDocument();
   });
 });

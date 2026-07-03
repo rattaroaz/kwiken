@@ -163,6 +163,16 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         CREATE INDEX IF NOT EXISTS idx_splits_category ON transaction_splits(category_id);
         "#,
     ),
+    (
+        "002_auto_rule_engine",
+        r#"
+        ALTER TABLE auto_categorize_rules ADD COLUMN target_field TEXT NOT NULL DEFAULT 'payee';
+        ALTER TABLE auto_categorize_rules ADD COLUMN match_type TEXT NOT NULL DEFAULT 'contains';
+        ALTER TABLE auto_categorize_rules ADD COLUMN priority INTEGER NOT NULL DEFAULT 100;
+        ALTER TABLE auto_categorize_rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+        CREATE INDEX IF NOT EXISTS idx_auto_rules_priority ON auto_categorize_rules(enabled, priority);
+        "#,
+    ),
 ];
 
 pub fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -387,17 +397,55 @@ pub fn seed_default_categories(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-pub fn apply_auto_category(conn: &Connection, payee_name: &str) -> Option<String> {
-    let lower = payee_name.to_lowercase();
+pub fn auto_rule_matches(
+    target_field: &str,
+    match_type: &str,
+    pattern: &str,
+    payee_name: &str,
+    memo: Option<&str>,
+) -> bool {
+    let needle = pattern.trim().to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    let payee = payee_name.to_lowercase();
+    let memo = memo.unwrap_or_default().to_lowercase();
+    let haystacks: Vec<&str> = match target_field {
+        "memo" => vec![memo.as_str()],
+        "payee_or_memo" => vec![payee.as_str(), memo.as_str()],
+        _ => vec![payee.as_str()],
+    };
+
+    haystacks.iter().any(|value| match match_type {
+        "starts_with" => value.starts_with(&needle),
+        "equals" => value == &needle,
+        _ => value.contains(&needle),
+    })
+}
+
+pub fn apply_auto_category(conn: &Connection, payee_name: &str, memo: Option<&str>) -> Option<String> {
     let mut stmt = conn
         .prepare(
-            "SELECT r.category_id FROM auto_categorize_rules r
-             WHERE lower(?1) LIKE '%' || lower(r.pattern) || '%'",
+            "SELECT pattern, category_id, target_field, match_type
+             FROM auto_categorize_rules
+             WHERE enabled = 1
+             ORDER BY priority ASC, pattern ASC",
         )
         .ok()?;
-    let mut rows = stmt.query([&lower]).ok()?;
-    if let Ok(Some(row)) = rows.next() {
-        return row.get(0).ok();
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .ok()?;
+    for (pattern, category_id, target_field, match_type) in rows.flatten() {
+        if auto_rule_matches(&target_field, &match_type, &pattern, payee_name, memo) {
+            return Some(category_id);
+        }
     }
     conn.query_row(
         "SELECT default_category_id FROM payees WHERE lower(name) = lower(?1)",

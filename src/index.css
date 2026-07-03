@@ -108,6 +108,25 @@ button {
   font: inherit;
 }
 
+select {
+  background-color: #0a0a0a;
+  color: #f1f5f9;
+  color-scheme: dark;
+}
+
+select option,
+select optgroup {
+  background-color: #0a0a0a;
+  color: #f1f5f9;
+}
+
+input[type="month"],
+input[type="date"] {
+  background-color: #0a0a0a;
+  color: #f1f5f9;
+  color-scheme: dark;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

@@ -129,6 +129,10 @@ export interface AutoCategorizeRule {
   pattern: string;
   category_id: string;
   category_name: string;
+  target_field: "payee" | "memo" | "payee_or_memo";
+  match_type: "contains" | "starts_with" | "equals";
+  priority: number;
+  enabled: boolean;
 }
 
 export interface SavedFilter {
