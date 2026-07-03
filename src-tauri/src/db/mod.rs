@@ -179,7 +179,8 @@ pub fn open_connection(app: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(&path).map_err(|e| format!("Database open failed: {e}"))?;
     conn.execute("PRAGMA foreign_keys = ON", [])
         .map_err(|e| format!("Database pragma failed: {e}"))?;
-    conn.execute("PRAGMA journal_mode = WAL", [])
+    // journal_mode returns a row; use pragma_update instead of execute.
+    conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("Database pragma failed: {e}"))?;
     run_migrations(&conn)?;
     Ok(conn)
@@ -406,6 +407,21 @@ mod tests {
         )
         .unwrap();
         assert!(detect_unclean_shutdown(&conn).unwrap());
+    }
+
+    #[test]
+    fn wal_journal_mode_can_be_enabled() {
+        let path = std::env::temp_dir().join(format!("kwiken-wal-test-{}.db", new_id()));
+        let conn = Connection::open(&path).expect("open temp db");
+        conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .expect("enable WAL");
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("read journal_mode");
+        assert_eq!(mode.to_lowercase(), "wal");
+        drop(conn);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
