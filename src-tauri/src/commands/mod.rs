@@ -1810,9 +1810,7 @@ pub fn delete_auto_rule(state: State<AppState>, id: String) -> Result<(), String
     Ok(())
 }
 
-#[tauri::command]
-pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+fn apply_auto_rules_internal(conn: &Connection, overwrite: bool) -> Result<i64, String> {
     let mut rule_stmt = conn
         .prepare(
             "SELECT pattern, category_id, target_field, match_type
@@ -1873,6 +1871,12 @@ pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool)
         }
     }
     Ok(updated)
+}
+
+#[tauri::command]
+pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool) -> Result<i64, String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    apply_auto_rules_internal(&conn, overwrite)
 }
 
 // ── SAVED FILTERS ─────────────────────────────────────────────────────────────
@@ -3093,5 +3097,198 @@ mod integration_tests {
         let page = list_transactions_internal(&conn, filter).unwrap();
         assert_eq!(page.len(), 2);
         assert!((page[0].running_balance.unwrap() - 70.0).abs() < 0.01);
+    }
+
+    fn first_category_id(conn: &Connection) -> String {
+        conn.query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn auto_rules_apply_by_priority_and_skip_categorized() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        let groceries = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = 'Groceries' LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap();
+        let restaurants = conn
+            .query_row(
+                "SELECT id FROM categories WHERE name = 'Restaurants' LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap();
+
+        conn.execute(
+            "INSERT INTO auto_categorize_rules (id, pattern, category_id, target_field, match_type, priority, enabled)
+             VALUES ('rule-low', 'starbucks', ?1, 'payee', 'contains', 200, 1)",
+            [&restaurants],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO auto_categorize_rules (id, pattern, category_id, target_field, match_type, priority, enabled)
+             VALUES ('rule-high', 'starbucks', ?1, 'payee', 'contains', 10, 1)",
+            [&groceries],
+        )
+        .unwrap();
+
+        let tx_id = new_id();
+        let payee_id = new_id();
+        conn.execute(
+            "INSERT INTO payees (id, name) VALUES (?1, 'Starbucks')",
+            [&payee_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, date, payee_id, amount, cleared, reconciled)
+             VALUES (?1, ?2, '2024-06-01', ?3, -5.0, 0, 0)",
+            params![tx_id, account_id, payee_id],
+        )
+        .unwrap();
+
+        let updated = apply_auto_rules_internal(&conn, false).unwrap();
+        assert_eq!(updated, 1);
+        let cat: String = conn
+            .query_row(
+                "SELECT category_id FROM transactions WHERE id = ?1",
+                [&tx_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cat, groceries);
+
+        let updated_again = apply_auto_rules_internal(&conn, false).unwrap();
+        assert_eq!(updated_again, 0);
+    }
+
+    #[test]
+    fn auto_rules_match_memo_field() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        let category_id = first_category_id(&conn);
+        conn.execute(
+            "INSERT INTO auto_categorize_rules (id, pattern, category_id, target_field, match_type, priority, enabled)
+             VALUES ('rule-memo', 'reimbursement', ?1, 'memo', 'contains', 100, 1)",
+            [&category_id],
+        )
+        .unwrap();
+        let tx_id = new_id();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, date, amount, memo, cleared, reconciled)
+             VALUES (?1, ?2, '2024-06-02', 100.0, 'Travel reimbursement', 0, 0)",
+            params![tx_id, account_id],
+        )
+        .unwrap();
+        assert_eq!(apply_auto_rules_internal(&conn, false).unwrap(), 1);
+    }
+
+    #[test]
+    fn master_password_verify_round_trip() {
+        let conn = open_test_connection();
+        assert!(!verify_password_internal(&conn, "secret").unwrap());
+        let salt = new_id();
+        let hash = hash_password("secret", &salt);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            params![MASTER_SALT_KEY, salt],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            params![MASTER_HASH_KEY, hash],
+        )
+        .unwrap();
+        assert!(verify_password_internal(&conn, "secret").unwrap());
+        assert!(!verify_password_internal(&conn, "wrong").unwrap());
+    }
+
+    #[test]
+    fn attachment_lifecycle() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        let tx = create_transaction_internal(
+            &conn,
+            &CreateTransaction {
+                account_id,
+                date: "2024-06-03".into(),
+                payee_name: Some("Store".into()),
+                category_id: None,
+                amount: -12.0,
+                memo: None,
+                cleared: false,
+                splits: vec![],
+                tag_ids: vec![],
+            },
+        )
+        .unwrap();
+        let attachment_id = new_id();
+        let file_path = if cfg!(windows) {
+            "C:\\temp\\kwiken-receipt.pdf".to_string()
+        } else {
+            "/tmp/kwiken-receipt.pdf".to_string()
+        };
+        validate_file_path(&file_path).expect("valid path");
+        conn.execute(
+            "INSERT INTO attachments (id, transaction_id, file_path, mime_type)
+             VALUES (?1, ?2, ?3, 'application/pdf')",
+            params![attachment_id, tx.id, file_path],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE transaction_id = ?1",
+                [&tx.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        conn.execute("DELETE FROM attachments WHERE id = ?1", [&attachment_id])
+            .unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE transaction_id = ?1",
+                [&tx.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn paginated_register_handles_ten_thousand_transactions() {
+        use std::time::Instant;
+
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        conn.execute("BEGIN", []).unwrap();
+        for i in 0..10_000 {
+            conn.execute(
+                "INSERT INTO transactions (id, account_id, date, amount, cleared, reconciled)
+                 VALUES (?1, ?2, ?3, -1.0, 0, 0)",
+                params![format!("tx-{i}"), account_id, format!("2024-01-{:02}", (i % 28) + 1)],
+            )
+            .unwrap();
+        }
+        conn.execute("COMMIT", []).unwrap();
+
+        let filter = TransactionFilter {
+            account_id: Some(account_id),
+            limit: Some(100),
+            offset: Some(9900),
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let page = list_transactions_internal(&conn, filter).unwrap();
+        let elapsed = start.elapsed();
+        assert_eq!(page.len(), 100);
+        assert!(
+            elapsed.as_millis() < 3000,
+            "pagination over 10k rows took too long: {:?}",
+            elapsed
+        );
     }
 }

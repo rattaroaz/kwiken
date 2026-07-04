@@ -39,6 +39,8 @@ export default function AccountDetailPage() {
   const [stmtDate, setStmtDate] = useState(todayIso());
   const [stmtBalance, setStmtBalance] = useState("");
   const [reconStatus, setReconStatus] = useState<ReconciliationSession | null>(null);
+  const [saveFilterOpen, setSaveFilterOpen] = useState(false);
+  const [filterName, setFilterName] = useState("");
   const [transfer, setTransfer] = useState<CreateTransfer>({
     from_account_id: id ?? "",
     to_account_id: "",
@@ -185,11 +187,16 @@ export default function AccountDetailPage() {
   };
 
   const saveFilter = async () => {
-    const name = prompt("Filter name:");
-    if (!name) return;
+    const name = filterName.trim();
+    if (!name) {
+      addToast("error", "Filter name is required");
+      return;
+    }
     try {
       await db.createSavedFilter(name, id ?? null, JSON.stringify(filter));
       addToast("success", "Filter saved");
+      setSaveFilterOpen(false);
+      setFilterName("");
       const filters = await db.listSavedFilters();
       setSavedFilters(filters.filter((f) => !f.account_id || f.account_id === id));
     } catch (e) {
@@ -253,7 +260,7 @@ export default function AccountDetailPage() {
           <input type="checkbox" checked={filter.cleared === true} onChange={(e) => setFilter({ ...filter, cleared: e.target.checked ? true : undefined })} className="rounded" />
           Cleared only
         </label>
-        <button type="button" onClick={saveFilter} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">Save filter</button>
+        <button type="button" onClick={() => setSaveFilterOpen(true)} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">Save filter</button>
         {savedFilters.map((sf) => (
           <button key={sf.id} type="button" onClick={() => applySavedFilter(sf)} className="rounded-full bg-muted px-3 py-1 text-xs hover:bg-accent">
             {sf.name}
@@ -413,6 +420,25 @@ export default function AccountDetailPage() {
               </p>
             </div>
           )}
+        </div>
+      </Modal>
+
+      <Modal open={saveFilterOpen} onClose={() => setSaveFilterOpen(false)} title="Save Filter" footer={
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={() => setSaveFilterOpen(false)} className="rounded-md border border-border px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={saveFilter} className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">Save</button>
+        </div>
+      }>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Filter name</label>
+          <input
+            type="text"
+            value={filterName}
+            onChange={(e) => setFilterName(e.target.value)}
+            placeholder="e.g. Cleared groceries"
+            className="w-full rounded-md border border-input px-3 py-2 text-sm"
+            autoFocus
+          />
         </div>
       </Modal>
     </div>

@@ -459,6 +459,7 @@ pub fn apply_auto_category(conn: &Connection, payee_name: &str, memo: Option<&st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
 
     #[test]
     fn integrity_check_passes_on_fresh_db() {
@@ -541,5 +542,89 @@ mod tests {
             "/tmp/../etc/passwd"
         };
         assert!(validate_file_path(bad).is_err());
+    }
+
+    #[test]
+    fn auto_rule_matches_payee_contains_and_equals() {
+        assert!(auto_rule_matches("payee", "contains", "star", "Starbucks", None));
+        assert!(!auto_rule_matches("payee", "contains", "coffee", "Starbucks", None));
+        assert!(auto_rule_matches("payee", "equals", "starbucks", "Starbucks", None));
+        assert!(!auto_rule_matches("payee", "equals", "star", "Starbucks", None));
+    }
+
+    #[test]
+    fn auto_rule_matches_memo_and_payee_or_memo() {
+        assert!(auto_rule_matches("memo", "contains", "refund", "Store", Some("Partial refund")));
+        assert!(auto_rule_matches(
+            "payee_or_memo",
+            "starts_with",
+            "travel",
+            "Employer",
+            Some("Travel reimbursement"),
+        ));
+        assert!(!auto_rule_matches("memo", "contains", "", "Store", Some("note")));
+    }
+
+    #[test]
+    fn migration_v1_to_v2_preserves_auto_rules() {
+        let path = std::env::temp_dir().join(format!("kwiken-migrate-v2-{}.db", new_id()));
+        let rule_id = new_id();
+        let category_id: String;
+        {
+            let conn = Connection::open(&path).expect("open v1 db");
+            conn.execute("PRAGMA foreign_keys = ON", []).expect("foreign keys");
+            conn.execute_batch(MIGRATIONS[0].1).expect("migration 001");
+            conn.execute("UPDATE schema_version SET version = 1", [])
+                .expect("set version");
+            seed_default_categories(&conn).expect("seed categories");
+            category_id = conn
+                .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+                .expect("category id");
+            conn.execute(
+                "INSERT INTO auto_categorize_rules (id, pattern, category_id) VALUES (?1, 'coffee', ?2)",
+                params![rule_id, category_id],
+            )
+            .expect("insert rule");
+        }
+
+        {
+            let conn = open_connection_at_path(&path).expect("upgrade to v2");
+            let version: i32 = conn
+                .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
+                .expect("schema version");
+            assert_eq!(version, 2);
+            let (pattern, cat, target_field, match_type, priority, enabled): (
+                String,
+                String,
+                String,
+                String,
+                i64,
+                i64,
+            ) = conn
+                .query_row(
+                    "SELECT pattern, category_id, target_field, match_type, priority, enabled
+                     FROM auto_categorize_rules WHERE id = ?1",
+                    [&rule_id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ))
+                    },
+                )
+                .expect("rule row");
+            assert_eq!(pattern, "coffee");
+            assert_eq!(cat, category_id);
+            assert_eq!(target_field, "payee");
+            assert_eq!(match_type, "contains");
+            assert_eq!(priority, 100);
+            assert_eq!(enabled, 1);
+        }
+
+        let _ = std::fs::remove_file(path);
     }
 }
