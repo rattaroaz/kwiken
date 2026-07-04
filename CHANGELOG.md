@@ -4,6 +4,18 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-07-04
+
+### Added
+
+- Rust integration tests: auto-rules engine, master password verify, attachments, v1→v2 migration, and 10k-transaction pagination perf.
+- 43 new frontend tests covering hooks (`useAutoBackup`, `useIdleLock`), db service, CommandPalette, CategoriesPage, TransactionForm, BudgetsPage, ReportsPage, ImportExportPage, and more.
+- Modal dialogs replacing `prompt()` for saved filters and budget amount editing.
+
+### Changed
+
+- Vitest coverage raised from ~49% to ~61% statements; 137 tests passing.
+
 ## [2.2.0] - 2026-07-02
 
 ### Added
@@ -98,7 +110,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.6.0
 [2.2.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.0
 [2.1.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.1.0
 [2.0.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.0.2
