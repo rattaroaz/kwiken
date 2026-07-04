@@ -20,8 +20,35 @@ describe("formatDate", () => {
     expect(formatDate("2024-03-15", "yyyy-MM-dd")).toBe("2024-03-15");
   });
 
+  it("formats dd/MM/yyyy", () => {
+    expect(formatDate("2024-03-15", "dd/MM/yyyy")).toBe("15/03/2024");
+  });
+
   it("returns raw string for invalid dates", () => {
     expect(formatDate("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("printReport", () => {
+  it("opens print window with content", async () => {
+    const { printReport } = await import("./utils");
+    const write = vi.fn();
+    const print = vi.fn();
+    vi.stubGlobal("open", vi.fn(() => ({
+      document: { write, close: vi.fn() },
+      print,
+    })));
+    printReport("Spending", "<table></table>");
+    expect(write).toHaveBeenCalled();
+    expect(print).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns early when popup is blocked", async () => {
+    const { printReport } = await import("./utils");
+    vi.stubGlobal("open", vi.fn(() => null));
+    expect(() => printReport("Spending", "<table></table>")).not.toThrow();
+    vi.unstubAllGlobals();
   });
 });
 

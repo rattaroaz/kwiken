@@ -12,6 +12,8 @@ export default function BudgetsPage() {
   const [period, setPeriod] = useState(currentPeriod());
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editBudget, setEditBudget] = useState<Budget | null>(null);
+  const [editAmount, setEditAmount] = useState("");
   const [form, setForm] = useState({ category_id: "", amount: "" });
 
   const settings = useDataStore((s) => s.settings);
@@ -73,6 +75,18 @@ export default function BudgetsPage() {
     });
   };
 
+  const confirmEditBudget = async () => {
+    if (!editBudget) return;
+    const amount = parseFloat(editAmount);
+    if (isNaN(amount) || amount <= 0) {
+      addToast("error", "Enter a valid amount");
+      return;
+    }
+    await handleUpdate(editBudget, amount);
+    setEditBudget(null);
+    setEditAmount("");
+  };
+
   if (loading) return <LoadingSkeleton rows={6} />;
 
   return (
@@ -110,8 +124,8 @@ export default function BudgetsPage() {
                       {formatCurrency(b.spent, currency, privacyMode)} / {formatCurrency(b.amount, currency, privacyMode)}
                     </span>
                     <button type="button" onClick={() => {
-                      const val = prompt("New budget amount:", String(b.amount));
-                      if (val) handleUpdate(b, parseFloat(val));
+                      setEditBudget(b);
+                      setEditAmount(String(b.amount));
                     }} className="text-xs text-primary hover:underline">Edit</button>
                     <button type="button" onClick={() => handleDelete(b)} className="text-xs text-destructive hover:underline">Delete</button>
                   </div>
@@ -147,6 +161,25 @@ export default function BudgetsPage() {
             <label className="mb-1 block text-sm font-medium">Monthly Amount</label>
             <input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full rounded-md border border-input px-3 py-2 text-sm" />
           </div>
+        </div>
+      </Modal>
+
+      <Modal open={editBudget !== null} onClose={() => setEditBudget(null)} title={`Edit Budget${editBudget ? `: ${editBudget.category_name}` : ""}`} footer={
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={() => setEditBudget(null)} className="rounded-md border border-border px-4 py-2 text-sm">Cancel</button>
+          <button type="button" onClick={confirmEditBudget} className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">Save</button>
+        </div>
+      }>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Monthly amount</label>
+          <input
+            type="number"
+            step="0.01"
+            value={editAmount}
+            onChange={(e) => setEditAmount(e.target.value)}
+            className="w-full rounded-md border border-input px-3 py-2 text-sm"
+            autoFocus
+          />
         </div>
       </Modal>
     </div>
