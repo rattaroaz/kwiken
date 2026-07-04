@@ -70,7 +70,7 @@ function sanitizeWindowsEnv(baseEnv = process.env) {
 
 function needsWindowsToolchain() {
   if (process.platform !== "win32") return false;
-  if (process.env.GITHUB_ACTIONS === "true" && !isArm64Build()) return false;
+  if (process.env.GITHUB_ACTIONS === "true") return false;
   return !hasClangOnPath() || !process.env.VCINSTALLDIR;
 }
 

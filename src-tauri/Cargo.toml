@@ -1,6 +1,6 @@
 [package]
 name = "kwiken"
-version = "2.2.3"
+version = "2.2.4"
 description = "Kwiken — personal finance manager"
 authors = ["Kwiken"]
 edition = "2021"

@@ -61,9 +61,11 @@ jobs:
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             arch_label: x64
+            vc_arch: x64
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
             arch_label: arm64
+            vc_arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +82,15 @@ jobs:
       - name: Prefer MSVC linker over Git link.exe
         shell: pwsh
         run: ./scripts/fix-windows-linker-path.ps1
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.vc_arch }}
+
+      - name: Add Windows SDK headers for clang
+        shell: pwsh
+        run: ./scripts/setup-windows-sdk-includes.ps1 -Arch ${{ matrix.vc_arch }}
 
       - name: Install LLVM (ARM64)
         if: matrix.target == 'aarch64-pc-windows-msvc'

@@ -4,6 +4,12 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.2.4] - 2026-07-03
+
+### Fixed
+
+- ARM64 GitHub Actions builds export MSVC and Windows SDK headers so the `ring` crate can compile with clang.
+
 ## [2.2.3] - 2026-07-03
 
 ### Fixed
@@ -124,7 +130,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.3...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.2.4...HEAD
+[2.2.4]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.4
 [2.2.3]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.3
 [2.2.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.2
 [2.2.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.1
