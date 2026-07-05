@@ -492,6 +492,29 @@ export async function invoke<T>(cmd: string, args?: Json): Promise<T> {
     case "mark_clean_shutdown_cmd":
       return undefined as T;
 
+    case "get_logs_directory":
+      return "C:\\e2e\\logs" as T;
+
+    case "append_frontend_log":
+      return undefined as T;
+
+    case "read_frontend_log_tail":
+      return "" as T;
+
+    case "get_diagnostic_snapshot":
+      return {
+        app_version: "2.6.0",
+        schema_version: 1,
+        db_ready: true,
+        db_corrupt: false,
+        unclean_shutdown: false,
+        has_accounts: store.accounts.length > 0,
+        account_count: store.accounts.length,
+        logs_directory: "C:\\e2e\\logs",
+        frontend_log_file: "C:\\e2e\\logs\\kwiken-frontend.log",
+        rust_log_file: "C:\\e2e\\logs\\kwiken-rust.log",
+      } as T;
+
     default:
       throw new Error(`E2E mock: unhandled command ${cmd}`);
   }

@@ -290,3 +290,17 @@ pub struct AppInitStatus {
     pub db_corrupt: bool,
     pub unclean_shutdown: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticSnapshot {
+    pub app_version: String,
+    pub schema_version: i32,
+    pub db_ready: bool,
+    pub db_corrupt: bool,
+    pub unclean_shutdown: bool,
+    pub has_accounts: bool,
+    pub account_count: i64,
+    pub logs_directory: String,
+    pub frontend_log_file: String,
+    pub rust_log_file: String,
+}

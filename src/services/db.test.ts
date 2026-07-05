@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@/lib/logger", () => ({
   logger: { db: { error: vi.fn() } },
   formatDbError: (e: unknown) => String(e),
+  withTiming: async <T>(_cat: string, _name: string, fn: () => Promise<T>) => fn(),
 }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -161,6 +162,29 @@ describe("db service", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("backup_database", { destPath: "/tmp/backup.db" });
     await db.restoreDatabase("/tmp/backup.db");
     expect(mockedInvoke).toHaveBeenCalledWith("restore_database", { srcPath: "/tmp/backup.db" });
+  });
+
+  it("calls observability commands", async () => {
+    mockedInvoke.mockResolvedValueOnce("/tmp/logs");
+    await db.getLogsDirectory();
+    expect(mockedInvoke).toHaveBeenCalledWith("get_logs_directory", undefined);
+    mockedInvoke.mockResolvedValueOnce(undefined);
+    await db.appendFrontendLog('{"message":"test"}');
+    expect(mockedInvoke).toHaveBeenCalledWith("append_frontend_log", { line: '{"message":"test"}' });
+    mockedInvoke.mockResolvedValueOnce({
+      app_version: "2.6.0",
+      schema_version: 2,
+      db_ready: true,
+      db_corrupt: false,
+      unclean_shutdown: false,
+      has_accounts: true,
+      account_count: 1,
+      logs_directory: "/tmp/logs",
+      frontend_log_file: "/tmp/logs/kwiken-frontend.log",
+      rust_log_file: "/tmp/logs/kwiken-rust.log",
+    });
+    const snapshot = await db.getDiagnosticSnapshot();
+    expect(snapshot.account_count).toBe(1);
   });
 });
 

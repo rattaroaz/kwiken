@@ -24,6 +24,12 @@ export const useLogStore = create<LogState>((set) => ({
     set((s) => ({
       entries: [...s.entries, entry].slice(-MAX_LOGS),
     })),
+  hydrateEntries: (incoming) =>
+    set((s) => {
+      const ids = new Set(s.entries.map((entry) => entry.id));
+      const fresh = incoming.filter((entry) => !ids.has(entry.id));
+      return { entries: [...fresh, ...s.entries].slice(-MAX_LOGS) };
+    }),
   clearLogs: () => set({ entries: [] }),
   openPanel: () => set({ panelOpen: true }),
   closePanel: () => set({ panelOpen: false }),

@@ -2,6 +2,7 @@
 
 mod commands;
 mod db;
+mod logging;
 mod models;
 mod parsers;
 mod state;
@@ -12,7 +13,6 @@ use tauri::Manager;
 
 fn init_logging() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
-    log::info!("Kwiken v{} starting", env!("CARGO_PKG_VERSION"));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,9 +25,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             init_logging();
+            logging::init_rust_file_logging(&app.handle());
+            log::info!("Kwiken v{} starting", env!("CARGO_PKG_VERSION"));
             let conn = open_connection(&app.handle())?;
             log::info!("Database connection opened");
-            app.manage(AppState::new(conn));
+            app.manage(AppState::new(conn, app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -121,6 +123,10 @@ pub fn run() {
             commands::lock_app,
             commands::unlock_app,
             commands::is_app_locked,
+            commands::get_logs_directory,
+            commands::append_frontend_log,
+            commands::read_frontend_log_tail,
+            commands::get_diagnostic_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

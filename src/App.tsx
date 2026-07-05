@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { db } from "@/services/db";
 import { logger } from "@/lib/logger";
+import { initObservability, isSaveLogsToDiskEnabled } from "@/lib/observability";
 import { DEFAULT_SETTINGS } from "@/lib/constants";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
 import type { Theme } from "@/shared/types";
@@ -61,6 +62,11 @@ export default function App() {
         const status = await db.initApp();
         const settings = await db.getAllSettings();
         setSettings({ ...DEFAULT_SETTINGS, ...settings });
+        await initObservability({
+          saveLogsToDisk: isSaveLogsToDiskEnabled({ ...DEFAULT_SETTINGS, ...settings }),
+          schemaVersion: status.schema_version,
+          hasAccounts: status.has_accounts,
+        });
         setTheme((settings.theme ?? "system") as Theme);
         applyTheme((settings.theme ?? "system") as Theme);
         const hasPw = await db.hasMasterPassword();
@@ -85,6 +91,11 @@ export default function App() {
         const settings = await db.getAllSettings();
         const merged = { ...DEFAULT_SETTINGS, ...settings };
         setSettings(merged);
+        await initObservability({
+          saveLogsToDisk: isSaveLogsToDiskEnabled(merged),
+          schemaVersion: status.schema_version,
+          hasAccounts: status.has_accounts,
+        });
 
         const themeValue = (merged.theme ?? "system") as Theme;
         setTheme(themeValue);

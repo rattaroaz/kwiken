@@ -259,6 +259,19 @@ export interface AppInitStatus {
   unclean_shutdown: boolean;
 }
 
+export interface DiagnosticSnapshot {
+  app_version: string;
+  schema_version: number;
+  db_ready: boolean;
+  db_corrupt: boolean;
+  unclean_shutdown: boolean;
+  has_accounts: boolean;
+  account_count: number;
+  logs_directory: string;
+  frontend_log_file: string;
+  rust_log_file: string;
+}
+
 export type Theme = "light" | "dark" | "system";
 
 export type UpdateDialogPhase =

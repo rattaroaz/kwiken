@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useLogStore } from "@/stores/logStore";
-import { formatDbError, getMinLogLevel, logger, sanitizeMetadata, shouldLog } from "./logger";
+import { formatDbError, getMinLogLevel, getLogSessionContext, initLogSession, logger, sanitizeMetadata, shouldLog, withTiming } from "./logger";
+
+vi.mock("@/lib/logFile", () => ({
+  appendLogEntryToFile: vi.fn(async () => undefined),
+}));
 
 describe("sanitizeMetadata", () => {
   it("redacts sensitive keys", () => {
@@ -75,5 +79,47 @@ describe("logger integration with logStore", () => {
     expect(messages).toEqual(
       expect.arrayContaining(["db failure", "import warning", "update info", "security warning"]),
     );
+  });
+});
+
+describe("session context", () => {
+  beforeEach(() => {
+    useLogStore.setState({ entries: [], panelOpen: false, levelFilter: "all" });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+  });
+
+  it("attaches session metadata to log entries", () => {
+    initLogSession({ session_id: "sess-1", app_version: "2.6.0" });
+    logger.app.info("started");
+    const entry = useLogStore.getState().entries[0];
+    expect(entry.metadata?.session_id).toBe("sess-1");
+    expect(entry.metadata?.app_version).toBe("2.6.0");
+    expect(getLogSessionContext().session_id).toBe("sess-1");
+  });
+});
+
+describe("withTiming", () => {
+  beforeEach(() => {
+    useLogStore.setState({ entries: [], panelOpen: false, levelFilter: "all" });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("logs duration on success", async () => {
+    await withTiming("db", "testOp", async () => "ok");
+    const entry = useLogStore.getState().entries.at(-1);
+    expect(entry?.message).toBe("testOp completed");
+    expect(entry?.metadata?.duration_ms).toEqual(expect.any(Number));
+  });
+
+  it("logs duration on failure", async () => {
+    await expect(
+      withTiming("db", "testOp", async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    const entry = useLogStore.getState().entries.at(-1);
+    expect(entry?.level).toBe("error");
+    expect(entry?.message).toBe("testOp failed");
   });
 });

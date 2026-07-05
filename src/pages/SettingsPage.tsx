@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import Modal from "@/components/common/Modal";
 import { APP_NAME, APP_VERSION, DEFAULT_SETTINGS } from "@/lib/constants";
+import { buildDiagnosticReport, formatDiagnosticReportText } from "@/lib/diagnostics";
+import { setLogFileEnabled } from "@/lib/logFile";
 import { logger } from "@/lib/logger";
+import { downloadTextFile } from "@/lib/utils";
 import { db } from "@/services/db";
 import { checkForUpdatesAndApply } from "@/services/updateService";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
@@ -19,6 +22,7 @@ export default function SettingsPage() {
   const setHasMasterPassword = useSecurityStore((s) => s.setHasMasterPassword);
   const setLocked = useSecurityStore((s) => s.setLocked);
   const openLogPanel = useLogStore((s) => s.openPanel);
+  const logEntries = useLogStore((s) => s.entries);
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -26,9 +30,12 @@ export default function SettingsPage() {
   const [password, setPassword] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [saving, setSaving] = useState(false);
+  const [logsDirectory, setLogsDirectory] = useState("");
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
 
   useEffect(() => {
     db.listAccounts().then(setAccounts).catch(() => {});
+    db.getLogsDirectory().then(setLogsDirectory).catch(() => {});
   }, []);
 
   const saveSetting = async (key: string, value: string) => {
@@ -36,6 +43,9 @@ export default function SettingsPage() {
       await db.setSetting(key, value);
       updateSetting(key, value);
       if (key === "theme") setTheme(value as Theme);
+      if (key === "save_logs_to_disk") {
+        setLogFileEnabled(value !== "false");
+      }
       addToast("success", "Setting saved");
     } catch (e) {
       addToast("error", e instanceof Error ? e.message : "Failed to save setting");
@@ -109,6 +119,23 @@ export default function SettingsPage() {
       addToast("success", "Backup created");
     } catch (e) {
       addToast("error", e instanceof Error ? e.message : "Backup failed");
+    }
+  };
+
+  const exportDiagnostics = async () => {
+    setExportingDiagnostics(true);
+    try {
+      const report = await buildDiagnosticReport(logEntries);
+      downloadTextFile(
+        formatDiagnosticReportText(report),
+        `kwiken-diagnostics-${new Date().toISOString().slice(0, 10)}.txt`,
+      );
+      logger.app.info("Diagnostic report exported");
+      addToast("success", "Diagnostic report downloaded");
+    } catch (e) {
+      addToast("error", e instanceof Error ? e.message : "Failed to export diagnostics");
+    } finally {
+      setExportingDiagnostics(false);
     }
   };
 
@@ -250,14 +277,41 @@ export default function SettingsPage() {
         <p className="text-sm text-muted-foreground">
           View application activity, database events, imports, updates, and security logs.
         </p>
-        <button
-          type="button"
-          data-testid="settings-view-logs"
-          onClick={openLogPanel}
-          className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
-        >
-          View application logs
-        </button>
+        {field("Save logs to disk", (
+          <select
+            value={settings.save_logs_to_disk ?? "true"}
+            onChange={(e) => saveSetting("save_logs_to_disk", e.target.value)}
+            className="w-full rounded-md border border-input px-3 py-2 text-sm"
+            data-testid="settings-save-logs-to-disk"
+          >
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+        ))}
+        {logsDirectory && (
+          <p className="text-xs text-muted-foreground break-all" data-testid="settings-logs-directory">
+            Log directory: {logsDirectory}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            data-testid="settings-view-logs"
+            onClick={openLogPanel}
+            className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+          >
+            View application logs
+          </button>
+          <button
+            type="button"
+            data-testid="settings-export-diagnostics"
+            onClick={exportDiagnostics}
+            disabled={exportingDiagnostics}
+            className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50"
+          >
+            {exportingDiagnostics ? "Exporting…" : "Export diagnostic report"}
+          </button>
+        </div>
       </section>
 
       <section className="flex gap-3">

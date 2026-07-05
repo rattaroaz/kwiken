@@ -3,6 +3,7 @@ use crate::db::{
     ensure_payee, mark_clean_shutdown, new_id, now_iso, seed_default_categories,
     validate_file_path,
 };
+use crate::logging;
 use crate::models::*;
 use crate::parsers::{parse_csv_content, parse_ofx_content, parse_qif_content};
 use crate::state::AppState;
@@ -10,10 +11,21 @@ use chrono::{Datelike, Months, NaiveDate, Utc};
 use rusqlite::{params, Connection, Row};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use tauri::State;
+use std::time::Instant;
+use tauri::{AppHandle, State};
 
 fn db_err(e: rusqlite::Error) -> String {
     format!("Database error: {e}")
+}
+
+fn timed_command<T, F>(app: &AppHandle, command: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let start = Instant::now();
+    let result = f();
+    logging::log_command_timing(app, command, start.elapsed().as_millis(), result.is_ok());
+    result
 }
 
 fn to_sqlite_err(msg: String) -> rusqlite::Error {
@@ -919,35 +931,38 @@ pub fn get_account_register(
     account_id: String,
     filter: TransactionFilter,
 ) -> Result<AccountRegister, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let account = get_account_internal(&conn, &account_id)?;
-    let mut tx_filter = filter;
-    tx_filter.account_id = Some(account_id.clone());
-    let total_count = count_transactions_internal(&conn, &tx_filter)?;
-    let transactions = list_transactions_internal(&conn, tx_filter)?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, account_id, filter_json FROM saved_filters
-             WHERE account_id IS NULL OR account_id = ?1 ORDER BY name",
-        )
-        .map_err(db_err)?;
-    let saved_filters = stmt
-        .query_map([&account_id], |row| {
-            Ok(SavedFilter {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                account_id: row.get(2)?,
-                filter_json: row.get(3)?,
+    let app = state.app.clone();
+    timed_command(&app, "get_account_register", || {
+        let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let account = get_account_internal(&conn, &account_id)?;
+        let mut tx_filter = filter;
+        tx_filter.account_id = Some(account_id.clone());
+        let total_count = count_transactions_internal(&conn, &tx_filter)?;
+        let transactions = list_transactions_internal(&conn, tx_filter)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, account_id, filter_json FROM saved_filters
+                 WHERE account_id IS NULL OR account_id = ?1 ORDER BY name",
+            )
+            .map_err(db_err)?;
+        let saved_filters = stmt
+            .query_map([&account_id], |row| {
+                Ok(SavedFilter {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    account_id: row.get(2)?,
+                    filter_json: row.get(3)?,
+                })
             })
+            .map_err(db_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_err)?;
+        Ok(AccountRegister {
+            account,
+            transactions,
+            total_count,
+            saved_filters,
         })
-        .map_err(db_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(db_err)?;
-    Ok(AccountRegister {
-        account,
-        transactions,
-        total_count,
-        saved_filters,
     })
 }
 
@@ -1875,8 +1890,11 @@ fn apply_auto_rules_internal(conn: &Connection, overwrite: bool) -> Result<i64, 
 
 #[tauri::command]
 pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    apply_auto_rules_internal(&conn, overwrite)
+    let app = state.app.clone();
+    timed_command(&app, "apply_auto_rules_to_transactions", || {
+        let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+        apply_auto_rules_internal(&conn, overwrite)
+    })
 }
 
 // ── SAVED FILTERS ─────────────────────────────────────────────────────────────
@@ -2814,8 +2832,11 @@ pub fn commit_csv_import(
     rows: Vec<ImportRow>,
     account_id: String,
 ) -> Result<i32, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    commit_import_rows(&conn, &account_id, &rows)
+    let app = state.app.clone();
+    timed_command(&app, "commit_csv_import", || {
+        let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+        commit_import_rows(&conn, &account_id, &rows)
+    })
 }
 
 #[tauri::command]
@@ -2866,11 +2887,13 @@ pub fn commit_ofx_import(
 
 #[tauri::command]
 pub fn backup_database(app: tauri::AppHandle, dest_path: String) -> Result<(), String> {
-    let dest = validate_file_path(&dest_path)?;
-    let src = crate::db::db_path(&app)?;
-    crate::db::backup_database_file(&src, &dest)?;
-    log::info!("Database backed up to {}", dest.display());
-    Ok(())
+    timed_command(&app, "backup_database", || {
+        let dest = validate_file_path(&dest_path)?;
+        let src = crate::db::db_path(&app)?;
+        crate::db::backup_database_file(&src, &dest)?;
+        log::info!("Database backed up to {}", dest.display());
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -2880,6 +2903,54 @@ pub fn restore_database(app: tauri::AppHandle, src_path: String) -> Result<(), S
     crate::db::restore_database_file(&src, &dest)?;
     log::warn!("Database restored from {}", src.display());
     Ok(())
+}
+
+// ── OBSERVABILITY ─────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_logs_directory(app: AppHandle) -> Result<String, String> {
+    logging::logs_directory(&app).map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn append_frontend_log(app: AppHandle, line: String) -> Result<(), String> {
+    let path = logging::frontend_log_path(&app)?;
+    logging::append_log_line(&path, &line)
+}
+
+#[tauri::command]
+pub fn read_frontend_log_tail(app: AppHandle, max_lines: Option<usize>) -> Result<String, String> {
+    let path = logging::frontend_log_path(&app)?;
+    logging::read_log_tail(&path, max_lines.unwrap_or(200))
+}
+
+#[tauri::command]
+pub fn get_diagnostic_snapshot(state: State<AppState>, app: AppHandle) -> Result<DiagnosticSnapshot, String> {
+    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let schema_version: i32 = conn
+        .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
+        .map_err(db_err)?;
+    let db_corrupt = !check_integrity(&conn);
+    let unclean_shutdown = detect_unclean_shutdown(&conn)?;
+    let account_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
+        .map_err(db_err)?;
+    let logs_dir = logging::logs_directory(&app)?;
+    let frontend_log = logging::frontend_log_path(&app)?;
+    let rust_log = logging::rust_log_path(&app)?;
+
+    Ok(DiagnosticSnapshot {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        schema_version,
+        db_ready: !db_corrupt,
+        db_corrupt,
+        unclean_shutdown,
+        has_accounts: account_count > 0,
+        account_count,
+        logs_directory: logs_dir.to_string_lossy().into_owned(),
+        frontend_log_file: frontend_log.to_string_lossy().into_owned(),
+        rust_log_file: rust_log.to_string_lossy().into_owned(),
+    })
 }
 
 // ── SECURITY ──────────────────────────────────────────────────────────────────

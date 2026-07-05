@@ -165,6 +165,21 @@ const mocks = vi.hoisted(() => {
         file_path: "C:\\e2e\\receipt.pdf",
       })),
       deleteAttachment: vi.fn(async () => undefined),
+      getLogsDirectory: vi.fn(async () => "C:\\e2e\\logs"),
+      appendFrontendLog: vi.fn(async () => undefined),
+      readFrontendLogTail: vi.fn(async () => []),
+      getDiagnosticSnapshot: vi.fn(async () => ({
+        app_version: "2.6.0",
+        schema_version: 2,
+        db_ready: true,
+        db_corrupt: false,
+        unclean_shutdown: false,
+        has_accounts: true,
+        account_count: 1,
+        logs_directory: "C:\\e2e\\logs",
+        frontend_log_file: "C:\\e2e\\logs\\kwiken-frontend.log",
+        rust_log_file: "C:\\e2e\\logs\\kwiken-rust.log",
+      })),
     },
   };
 });

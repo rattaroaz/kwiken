@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { logger, formatDbError } from "@/lib/logger";
+import { logger, formatDbError, withTiming } from "@/lib/logger";
 import type {
   Account,
   AccountRegister,
@@ -13,6 +13,7 @@ import type {
   CreateAccount,
   CreateTransaction,
   CreateTransfer,
+  DiagnosticSnapshot,
   DashboardSummary,
   ExchangeRate,
   ImportPreview,
@@ -84,7 +85,9 @@ export const db = {
   countTransactions: (filter: TransactionFilter = {}) =>
     call<number>("count_transactions", { filter }),
   getAccountRegister: (accountId: string, filter: TransactionFilter = {}) =>
-    call<AccountRegister>("get_account_register", { accountId, filter }),
+    withTiming("db", "getAccountRegister", () =>
+      call<AccountRegister>("get_account_register", { accountId, filter }),
+    { accountId }),
   getTransaction: (id: string) => call<Transaction>("get_transaction", { id }),
   createTransaction: (input: CreateTransaction) =>
     call<Transaction>("create_transaction", { input }),
@@ -184,7 +187,9 @@ export const db = {
     }),
   deleteAutoRule: (id: string) => call<void>("delete_auto_rule", { id }),
   applyAutoRulesToTransactions: (overwrite = false) =>
-    call<number>("apply_auto_rules_to_transactions", { overwrite }),
+    withTiming("db", "applyAutoRulesToTransactions", () =>
+      call<number>("apply_auto_rules_to_transactions", { overwrite }),
+    { overwrite }),
 
   listSavedFilters: () => call<SavedFilter[]>("list_saved_filters"),
   createSavedFilter: (name: string, accountId: string | null, filterJson: string) =>
@@ -229,9 +234,13 @@ export const db = {
   exportAccountsCsv: () => call<string>("export_accounts_csv"),
   exportCategoriesCsv: () => call<string>("export_categories_csv"),
   previewCsvImport: (csvContent: string, accountId: string) =>
-    call<ImportPreview>("preview_csv_import", { csvContent, accountId }),
+    withTiming("import", "previewCsvImport", () =>
+      call<ImportPreview>("preview_csv_import", { csvContent, accountId }),
+    { accountId }),
   commitCsvImport: (rows: ImportRow[], accountId: string) =>
-    call<number>("commit_csv_import", { rows, accountId }),
+    withTiming("import", "commitCsvImport", () =>
+      call<number>("commit_csv_import", { rows, accountId }),
+    { accountId, rowCount: rows.length }),
   previewQifImport: (qifContent: string, accountId: string) =>
     call<ImportPreview>("preview_qif_import", { qifContent, accountId }),
   commitQifImport: (qifContent: string, accountId: string) =>
@@ -241,8 +250,15 @@ export const db = {
   commitOfxImport: (ofxContent: string, accountId: string) =>
     call<number>("commit_ofx_import", { ofxContent, accountId }),
 
-  backupDatabase: (destPath: string) => call<void>("backup_database", { destPath }),
-  restoreDatabase: (srcPath: string) => call<void>("restore_database", { srcPath }),
+  backupDatabase: (destPath: string) =>
+    withTiming("db", "backupDatabase", () => call<void>("backup_database", { destPath })),
+  restoreDatabase: (srcPath: string) =>
+    withTiming("db", "restoreDatabase", () => call<void>("restore_database", { srcPath })),
+
+  getLogsDirectory: () => call<string>("get_logs_directory"),
+  appendFrontendLog: (line: string) => call<void>("append_frontend_log", { line }),
+  readFrontendLogTail: (maxLines = 200) => call<string>("read_frontend_log_tail", { maxLines }),
+  getDiagnosticSnapshot: () => call<DiagnosticSnapshot>("get_diagnostic_snapshot"),
 
   setMasterPassword: (password: string) => call<void>("set_master_password", { password }),
   hasMasterPassword: () => call<boolean>("has_master_password"),

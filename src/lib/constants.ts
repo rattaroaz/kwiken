@@ -30,4 +30,5 @@ export const DEFAULT_SETTINGS = {
   auto_lock_minutes: "15",
   privacy_mode: "false",
   books_closed_year: "",
+  save_logs_to_disk: "true",
 } as const;

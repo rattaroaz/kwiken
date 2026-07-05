@@ -20,6 +20,18 @@ describe("useLogStore", () => {
     expect(useLogStore.getState().entries[0]?.message).toBe("entry-5");
   });
 
+  it("hydrates prior entries without duplicates", () => {
+    useLogStore.setState({ entries: [makeLogEntry({ id: "keep", message: "live" })] });
+    useLogStore.getState().hydrateEntries([
+      makeLogEntry({ id: "keep", message: "old" }),
+      makeLogEntry({ id: "restored", message: "from disk" }),
+    ]);
+    const entries = useLogStore.getState().entries;
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.id).toBe("restored");
+    expect(entries[1]?.message).toBe("live");
+  });
+
   it("updates level filter and clears logs", () => {
     useLogStore.setState({ entries: [makeLogEntry()], levelFilter: "all" });
     useLogStore.getState().setLevelFilter("error");
