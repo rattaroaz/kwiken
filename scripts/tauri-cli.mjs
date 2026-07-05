@@ -88,13 +88,46 @@ function runTauri(env) {
   });
 }
 
+function findCargoBinDir(env = process.env) {
+  try {
+    const out = execSync("where cargo", {
+      encoding: "utf8",
+      env: sanitizeWindowsEnv(env),
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const cargoExe = out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => /cargo\.exe$/i.test(line));
+    if (cargoExe) return dirname(cargoExe);
+  } catch {
+    // fall through to common install locations
+  }
+
+  const home = env.USERPROFILE ?? env.HOME ?? "";
+  const candidates = [
+    home ? resolve(home, ".cargo", "bin") : null,
+    "C:\\Program Files\\Rust stable MSVC 1.92\\bin",
+    "C:\\Program Files\\Rust stable GNU 1.92\\bin",
+  ].filter(Boolean);
+
+  return candidates.find((dir) => existsSync(resolve(dir, "cargo.exe"))) ?? null;
+}
+
+function windowsSystem32Dir(env = process.env) {
+  const rootDir = env.SystemRoot ?? "C:\\Windows";
+  return resolve(rootDir, "System32");
+}
+
 function runTauriViaCmd(vcvars, llvmBin) {
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const tauriArgs = args.map((a) => `"${a}"`).join(" ");
-  const cleanPath = sanitizeWindowsEnv().PATH ?? "";
+  const system32 = windowsSystem32Dir();
+  const cargoBin = findCargoBinDir();
   const command = [
-    `set "PATH=${cleanPath}"`,
+    `set "PATH=${system32};%PATH%"`,
     `call "${vcvars}" ${arch}`,
+    ...(cargoBin ? [`set "PATH=${cargoBin};%PATH%"`] : []),
     ...(llvmBin ? [`set "PATH=${llvmBin};%PATH%"`] : []),
     `cd /d "${root}"`,
     `"${process.execPath}" "${tauriCli}" ${tauriArgs}`,
