@@ -107,7 +107,8 @@ describe("withTiming", () => {
 
   it("logs duration on success", async () => {
     await withTiming("db", "testOp", async () => "ok");
-    const entry = useLogStore.getState().entries.at(-1);
+    const entries = useLogStore.getState().entries;
+    const entry = entries[entries.length - 1];
     expect(entry?.message).toBe("testOp completed");
     expect(entry?.metadata?.duration_ms).toEqual(expect.any(Number));
   });
@@ -118,7 +119,8 @@ describe("withTiming", () => {
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
-    const entry = useLogStore.getState().entries.at(-1);
+    const entries = useLogStore.getState().entries;
+    const entry = entries[entries.length - 1];
     expect(entry?.level).toBe("error");
     expect(entry?.message).toBe("testOp failed");
   });

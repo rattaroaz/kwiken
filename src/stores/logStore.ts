@@ -10,6 +10,7 @@ interface LogState {
   panelOpen: boolean;
   levelFilter: LogLevelFilter;
   addEntry: (entry: LogEntry) => void;
+  hydrateEntries: (incoming: LogEntry[]) => void;
   clearLogs: () => void;
   openPanel: () => void;
   closePanel: () => void;
