@@ -4,6 +4,10 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded to TypeScript 7 (native Go compiler) with TypeScript 6 side-by-side for `typescript-eslint` until the 7.1 compiler API lands.
+
 ## [2.6.0] - 2026-07-04
 
 ### Added
