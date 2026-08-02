@@ -259,6 +259,12 @@ export interface AppInitStatus {
   unclean_shutdown: boolean;
 }
 
+export interface SecurityStatus {
+  hasMasterPassword: boolean;
+  isLocked: boolean;
+  databaseEncrypted: boolean;
+}
+
 export interface DiagnosticSnapshot {
   app_version: string;
   schema_version: number;

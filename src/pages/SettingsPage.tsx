@@ -27,15 +27,19 @@ export default function SettingsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [pwModal, setPwModal] = useState(false);
+  const [encryptModal, setEncryptModal] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
+  const [encryptPassword, setEncryptPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [backupEncrypted, setBackupEncrypted] = useState(false);
   const [logsDirectory, setLogsDirectory] = useState("");
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
 
   useEffect(() => {
     db.listAccounts().then(setAccounts).catch(() => {});
     db.getLogsDirectory().then(setLogsDirectory).catch(() => {});
+    db.isDatabaseEncrypted().then(setBackupEncrypted).catch(() => {});
   }, []);
 
   const saveSetting = async (key: string, value: string) => {
@@ -91,6 +95,27 @@ export default function SettingsPage() {
     } catch (e) {
       logger.security.error("Failed to lock app", { error: String(e) });
       addToast("error", e instanceof Error ? e.message : "Failed to lock app");
+    }
+  };
+
+  const enableBackupEncryption = async () => {
+    if (!encryptPassword) {
+      addToast("error", "Enter your master password to enable encryption");
+      return;
+    }
+    setSaving(true);
+    try {
+      await db.enableDatabaseEncryption(encryptPassword);
+      setBackupEncrypted(true);
+      setEncryptModal(false);
+      setEncryptPassword("");
+      logger.security.info("Backup encryption enabled");
+      addToast("success", "Encrypted backups enabled");
+    } catch (e) {
+      logger.security.error("Failed to enable backup encryption", { error: String(e) });
+      addToast("error", e instanceof Error ? e.message : "Failed to enable encryption");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -262,12 +287,31 @@ export default function SettingsPage() {
             className="w-full rounded-md border border-input px-3 py-2 text-sm"
           />
         ))}
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button type="button" onClick={() => setPwModal(true)} className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground">
             {hasMasterPassword ? "Change Master Password" : "Set Master Password"}
           </button>
           {hasMasterPassword && (
             <button type="button" onClick={lockNow} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted">Lock Now</button>
+          )}
+        </div>
+        <div className="space-y-2 border-t border-border pt-4">
+          <p className="text-sm text-muted-foreground">
+            Backup encryption seals database backups with ChaCha20-Poly1305 using a key stored in the OS keyring.
+            The live database file is not encrypted at rest.
+          </p>
+          <p className="text-sm" data-testid="settings-backup-encryption-status">
+            Status: {backupEncrypted ? "Encrypted backups enabled" : "Backups not encrypted"}
+          </p>
+          {hasMasterPassword && !backupEncrypted && (
+            <button
+              type="button"
+              data-testid="settings-enable-backup-encryption"
+              onClick={() => setEncryptModal(true)}
+              className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+            >
+              Enable encrypted backups
+            </button>
           )}
         </div>
       </section>
@@ -336,6 +380,51 @@ export default function SettingsPage() {
         <div className="space-y-4">
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="New password" className="w-full rounded-md border border-input px-3 py-2 text-sm" />
           <input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirm password" className="w-full rounded-md border border-input px-3 py-2 text-sm" />
+        </div>
+      </Modal>
+
+      <Modal
+        open={encryptModal}
+        onClose={() => {
+          setEncryptModal(false);
+          setEncryptPassword("");
+        }}
+        title="Enable Encrypted Backups"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setEncryptModal(false);
+                setEncryptPassword("");
+              }}
+              className="rounded-md border border-border px-4 py-2 text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={enableBackupEncryption}
+              disabled={saving}
+              className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+            >
+              Enable
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Confirm your master password to turn on encrypted database backups.
+          </p>
+          <input
+            type="password"
+            value={encryptPassword}
+            onChange={(e) => setEncryptPassword(e.target.value)}
+            placeholder="Master password"
+            className="w-full rounded-md border border-input px-3 py-2 text-sm"
+            data-testid="settings-encrypt-password"
+          />
         </div>
       </Modal>
     </div>

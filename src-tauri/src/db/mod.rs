@@ -173,6 +173,22 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         CREATE INDEX IF NOT EXISTS idx_auto_rules_priority ON auto_categorize_rules(enabled, priority);
         "#,
     ),
+    (
+        "003_money_cents",
+        r#"
+        -- Convert dollar REAL amounts to integer cents (stored as numeric values).
+        UPDATE accounts SET opening_balance = ROUND(opening_balance * 100);
+        UPDATE accounts SET minimum_payment = ROUND(minimum_payment * 100) WHERE minimum_payment IS NOT NULL;
+        UPDATE transactions SET amount = ROUND(amount * 100);
+        UPDATE transaction_splits SET amount = ROUND(amount * 100);
+        UPDATE budgets SET amount = ROUND(amount * 100);
+        UPDATE recurring_transactions SET amount = ROUND(amount * 100);
+        UPDATE transaction_templates SET amount = ROUND(amount * 100) WHERE amount IS NOT NULL;
+        UPDATE investment_holdings SET cost_basis = ROUND(cost_basis * 100),
+            current_price = CASE WHEN current_price IS NULL THEN NULL ELSE ROUND(current_price * 100) END;
+        UPDATE loan_details SET principal = ROUND(principal * 100);
+        "#,
+    ),
 ];
 
 pub fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -182,6 +198,29 @@ pub fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("Could not resolve app data directory: {e}"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create app data directory: {e}"))?;
     Ok(dir.join("kwiken.db"))
+}
+
+pub fn encryption_marker_path(db_path: &Path) -> PathBuf {
+    db_path.with_extension("db.encrypted")
+}
+
+pub fn is_encryption_enabled(db_path: &Path) -> bool {
+    encryption_marker_path(db_path).exists()
+}
+
+pub fn write_encryption_marker(db_path: &Path) -> Result<(), String> {
+    std::fs::write(encryption_marker_path(db_path), b"1")
+        .map_err(|e| format!("Could not write encryption marker: {e}"))
+}
+
+#[allow(dead_code)]
+pub fn remove_encryption_marker(db_path: &Path) -> Result<(), String> {
+    let marker = encryption_marker_path(db_path);
+    if marker.exists() {
+        std::fs::remove_file(&marker)
+            .map_err(|e| format!("Could not remove encryption marker: {e}"))?;
+    }
+    Ok(())
 }
 
 pub fn open_connection(app: &AppHandle) -> Result<Connection, String> {
@@ -199,6 +238,49 @@ pub fn open_connection_at_path(path: &Path) -> Result<Connection, String> {
         .map_err(|e| format!("Database pragma failed: {e}"))?;
     run_migrations(&conn)?;
     Ok(conn)
+}
+
+/// Enable encrypted backups: stores a key in the OS keyring and writes a marker file.
+/// Live DB remains SQLite; exports created after this are sealed with ChaCha20-Poly1305.
+pub fn enable_encryption(_conn: &Connection, db_path: &Path) -> Result<(), String> {
+    if is_encryption_enabled(db_path) {
+        return Err("Backup encryption is already enabled".into());
+    }
+    let key = crate::crypto::generate_db_key();
+    crate::crypto::store_db_key(&key)?;
+    write_encryption_marker(db_path).map_err(|e| {
+        let _ = crate::crypto::delete_db_key();
+        e
+    })?;
+    Ok(())
+}
+
+pub fn backup_database_file_encrypted(source: &Path, dest: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Err("Source database file not found".into());
+    }
+    let key = crate::crypto::load_db_key()?
+        .ok_or_else(|| "Encryption key missing from OS keyring".to_string())?;
+    let plaintext =
+        std::fs::read(source).map_err(|e| format!("Could not read database for backup: {e}"))?;
+    let sealed = crate::crypto::seal_bytes(&key, &plaintext)?;
+    std::fs::write(dest, sealed).map_err(|e| format!("Encrypted backup failed: {e}"))
+}
+
+pub fn restore_database_file_maybe_encrypted(source: &Path, dest: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Err("Source database file not found".into());
+    }
+    let bytes = std::fs::read(source).map_err(|e| format!("Could not read backup: {e}"))?;
+    // Encrypted backups are opaque binary; SQLite headers start with "SQLite format 3"
+    let plaintext = if bytes.starts_with(b"SQLite format 3") {
+        bytes
+    } else {
+        let key = crate::crypto::load_db_key()?
+            .ok_or_else(|| "Encrypted backup requires the OS keyring key".to_string())?;
+        crate::crypto::open_bytes(&key, &bytes)?
+    };
+    std::fs::write(dest, plaintext).map_err(|e| format!("Restore failed: {e}"))
 }
 
 pub fn backup_database_file(source: &Path, dest: &Path) -> Result<(), String> {
@@ -264,6 +346,18 @@ pub fn open_test_connection() -> Connection {
     conn
 }
 
+/// Whether a master password hash exists in settings.
+pub fn has_master_password_hash(conn: &Connection) -> Result<bool, String> {
+    let exists: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = ?1",
+            [crate::crypto::MASTER_HASH_KEY],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("Settings query failed: {e}"))?;
+    Ok(exists > 0)
+}
+
 fn run_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -326,21 +420,21 @@ pub fn ensure_payee(conn: &Connection, name: &str) -> SqlResult<String> {
 }
 
 pub fn account_balance(conn: &Connection, account_id: &str) -> Result<f64, String> {
-    let opening: f64 = conn
+    let opening: i64 = conn
         .query_row(
             "SELECT opening_balance FROM accounts WHERE id = ?1",
             [account_id],
-            |r| r.get(0),
+            |r| crate::money::row_cents(r, 0),
         )
         .map_err(|e| format!("Account not found: {e}"))?;
-    let tx_sum: f64 = conn
+    let tx_sum: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = ?1",
             [account_id],
-            |r| r.get(0),
+            |r| crate::money::row_cents(r, 0),
         )
         .map_err(|e| format!("Balance query failed: {e}"))?;
-    Ok(opening + tx_sum)
+    Ok(crate::money::cents_to_dollars(opening + tx_sum))
 }
 
 pub fn seed_default_categories(conn: &Connection) -> Result<(), String> {
@@ -592,7 +686,7 @@ mod tests {
             let version: i32 = conn
                 .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
                 .expect("schema version");
-            assert_eq!(version, 2);
+            assert_eq!(version, 3);
             let (pattern, cat, target_field, match_type, priority, enabled): (
                 String,
                 String,

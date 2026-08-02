@@ -25,6 +25,7 @@ import type {
   ReconciliationSession,
   RecurringTransaction,
   SavedFilter,
+  SecurityStatus,
   Tag,
   TaxSummaryRow,
   Transaction,
@@ -265,4 +266,8 @@ export const db = {
   lockApp: () => call<void>("lock_app"),
   unlockApp: (password: string) => call<boolean>("unlock_app", { password }),
   isAppLocked: () => call<boolean>("is_app_locked"),
+  isDatabaseEncrypted: () => call<boolean>("is_database_encrypted"),
+  enableDatabaseEncryption: (password: string) =>
+    call<void>("enable_database_encryption", { password }),
+  getSecurityStatus: () => call<SecurityStatus>("get_security_status"),
 };

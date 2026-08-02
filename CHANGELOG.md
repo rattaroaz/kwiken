@@ -4,9 +4,19 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+### Added
+
+- Backend lock enforcement: data commands require an unlocked session when a master password is set.
+- Argon2id master-password hashing with transparent upgrade from legacy SHA-256 hashes.
+- Optional encrypted backups (ChaCha20-Poly1305 + OS keyring); live DB remains plaintext SQLite.
+- Content Security Policy (`csp` / `devCsp`) in Tauri config.
+- Security status / enable-encryption commands and Settings UI for backup encryption.
+
 ### Changed
 
+- Money amounts are stored as integer cents in SQLite (migration `003_money_cents`); API still uses dollar floats.
 - Upgraded to TypeScript 7 (native Go compiler) with TypeScript 6 side-by-side for `typescript-eslint` until the 7.1 compiler API lands.
+- Extracted security Tauri commands into `commands/security.rs`.
 
 ## [2.6.0] - 2026-07-04
 

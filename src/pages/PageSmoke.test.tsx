@@ -156,6 +156,13 @@ const mocks = vi.hoisted(() => {
       getAllSettings: vi.fn(async () => ({ currency: "USD", theme: "light" })),
       setMasterPassword: vi.fn(async () => undefined),
       lockApp: vi.fn(async () => undefined),
+      isDatabaseEncrypted: vi.fn(async () => false),
+      enableDatabaseEncryption: vi.fn(async () => undefined),
+      getSecurityStatus: vi.fn(async () => ({
+        hasMasterPassword: false,
+        isLocked: false,
+        databaseEncrypted: false,
+      })),
       createTransaction: vi.fn(async () => transaction),
       updateTransaction: vi.fn(async () => transaction),
       listAttachments: vi.fn(async () => []),

@@ -131,6 +131,17 @@ describe("db service", () => {
     expect(mockedInvoke).toHaveBeenCalledWith("unlock_app", { password: "secret" });
     await db.lockApp();
     expect(mockedInvoke).toHaveBeenCalledWith("lock_app", undefined);
+    await db.isDatabaseEncrypted();
+    expect(mockedInvoke).toHaveBeenCalledWith("is_database_encrypted", undefined);
+    await db.enableDatabaseEncryption("secret");
+    expect(mockedInvoke).toHaveBeenCalledWith("enable_database_encryption", { password: "secret" });
+    mockedInvoke.mockResolvedValue({
+      hasMasterPassword: true,
+      isLocked: false,
+      databaseEncrypted: true,
+    });
+    await db.getSecurityStatus();
+    expect(mockedInvoke).toHaveBeenCalledWith("get_security_status", undefined);
   });
 
   it("calls import and export commands", async () => {

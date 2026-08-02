@@ -1,13 +1,15 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 mod commands;
+mod crypto;
 mod db;
 mod logging;
 mod models;
+mod money;
 mod parsers;
 mod state;
 
-use db::open_connection;
+use db::{has_master_password_hash, open_connection};
 use state::AppState;
 use tauri::Manager;
 
@@ -28,8 +30,11 @@ pub fn run() {
             logging::init_rust_file_logging(&app.handle());
             log::info!("Kwiken v{} starting", env!("CARGO_PKG_VERSION"));
             let conn = open_connection(&app.handle())?;
-            log::info!("Database connection opened");
-            app.manage(AppState::new(conn, app.handle().clone()));
+            let start_locked = has_master_password_hash(&conn).unwrap_or(false);
+            log::info!(
+                "Database connection opened (start_locked={start_locked})"
+            );
+            app.manage(AppState::new(conn, start_locked, app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -118,11 +123,14 @@ pub fn run() {
             commands::commit_ofx_import,
             commands::backup_database,
             commands::restore_database,
-            commands::set_master_password,
-            commands::has_master_password,
-            commands::lock_app,
-            commands::unlock_app,
-            commands::is_app_locked,
+            commands::security::set_master_password,
+            commands::security::has_master_password,
+            commands::security::lock_app,
+            commands::security::unlock_app,
+            commands::security::is_app_locked,
+            commands::security::is_database_encrypted,
+            commands::security::enable_database_encryption,
+            commands::security::get_security_status,
             commands::get_logs_directory,
             commands::append_frontend_log,
             commands::read_frontend_log_tail,

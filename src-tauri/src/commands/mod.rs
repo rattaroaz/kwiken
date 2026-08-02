@@ -1,3 +1,5 @@
+pub mod security;
+
 use crate::db::{
     account_balance, apply_auto_category, auto_rule_matches, check_integrity, detect_unclean_shutdown,
     ensure_payee, mark_clean_shutdown, new_id, now_iso, seed_default_categories,
@@ -6,10 +8,10 @@ use crate::db::{
 use crate::logging;
 use crate::models::*;
 use crate::parsers::{parse_csv_content, parse_ofx_content, parse_qif_content};
+use crate::money::{cents_to_dollars, dollars_to_cents, row_cents, row_cents_opt};
 use crate::state::AppState;
 use chrono::{Datelike, Months, NaiveDate, Utc};
 use rusqlite::{params, Connection, Row};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Instant;
 use tauri::{AppHandle, State};
@@ -52,7 +54,7 @@ fn load_splits(conn: &Connection, transaction_id: &str) -> Result<Vec<Transactio
                 id: row.get(0)?,
                 transaction_id: row.get(1)?,
                 category_id: row.get(2)?,
-                amount: row.get(3)?,
+                amount: cents_to_dollars(row_cents(row, 3)?),
                 memo: row.get(4)?,
             })
         })
@@ -95,7 +97,7 @@ fn row_to_transaction(
         payee_name: row.get(4).map_err(db_err)?,
         category_id: row.get(5).map_err(db_err)?,
         category_name: row.get(6).map_err(db_err)?,
-        amount: row.get(7).map_err(db_err)?,
+        amount: cents_to_dollars(row_cents(row, 7).map_err(db_err)?),
         memo: row.get(8).map_err(db_err)?,
         cleared: bool_from_i(row.get(9).map_err(db_err)?),
         reconciled: bool_from_i(row.get(10).map_err(db_err)?),
@@ -129,7 +131,7 @@ fn insert_splits(
         conn.execute(
             "INSERT INTO transaction_splits (id, transaction_id, category_id, amount, memo)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![new_id(), transaction_id, split.category_id, split.amount, split.memo],
+            params![new_id(), transaction_id, split.category_id, dollars_to_cents(split.amount), split.memo],
         )
         .map_err(db_err)?;
     }
@@ -193,10 +195,10 @@ fn row_to_account(conn: &Connection, row: &Row) -> Result<Account, String> {
         name: row.get(1).map_err(db_err)?,
         account_type: row.get(2).map_err(db_err)?,
         currency: row.get(3).map_err(db_err)?,
-        opening_balance: row.get(4).map_err(db_err)?,
+        opening_balance: cents_to_dollars(row_cents(row, 4).map_err(db_err)?),
         institution: row.get(5).map_err(db_err)?,
         is_archived: bool_from_i(row.get(6).map_err(db_err)?),
-        minimum_payment: row.get(7).map_err(db_err)?,
+        minimum_payment: row_cents_opt(row, 7).map_err(db_err)?.map(cents_to_dollars),
         payment_due_day: row.get(8).map_err(db_err)?,
         created_at: row.get(9).map_err(db_err)?,
         balance,
@@ -221,13 +223,14 @@ fn is_duplicate(
     amount: f64,
     payee: &Option<String>,
 ) -> Result<bool, String> {
+    let amount_cents = dollars_to_cents(amount);
     let count: i64 = if let Some(p) = payee {
         conn.query_row(
             "SELECT COUNT(*) FROM transactions t
              LEFT JOIN payees py ON t.payee_id = py.id
              WHERE t.account_id = ?1 AND t.date = ?2 AND t.amount = ?3
              AND lower(py.name) = lower(?4)",
-            params![account_id, date, amount, p],
+            params![account_id, date, amount_cents, p],
             |r| r.get(0),
         )
         .map_err(db_err)?
@@ -235,7 +238,7 @@ fn is_duplicate(
         conn.query_row(
             "SELECT COUNT(*) FROM transactions t
              WHERE t.account_id = ?1 AND t.date = ?2 AND t.amount = ?3 AND t.payee_id IS NULL",
-            params![account_id, date, amount],
+            params![account_id, date, amount_cents],
             |r| r.get(0),
         )
         .map_err(db_err)?
@@ -260,13 +263,6 @@ fn advance_recurring_date(date_str: &str, frequency: &str) -> Result<String, Str
     Ok(next.format("%Y-%m-%d").to_string())
 }
 
-fn hash_password(password: &str, salt: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(salt.as_bytes());
-    hasher.update(password.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
 fn period_range(period: &str) -> Result<(String, String), String> {
     let parts: Vec<&str> = period.split('-').collect();
     if parts.len() != 2 {
@@ -288,26 +284,26 @@ fn period_range(period: &str) -> Result<(String, String), String> {
 }
 
 fn category_spent(conn: &Connection, category_id: &str, from: &str, to: &str) -> Result<f64, String> {
-    let direct: f64 = conn
+    let direct: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0)
              FROM transactions
              WHERE category_id = ?1 AND date >= ?2 AND date < ?3",
             params![category_id, from, to],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
-    let split: f64 = conn
+    let split: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(CASE WHEN s.amount < 0 THEN -s.amount ELSE s.amount END), 0)
+            "SELECT COALESCE(SUM(CASE WHEN s.amount < 0 THEN -s.amount ELSE 0 END), 0)
              FROM transaction_splits s
              INNER JOIN transactions t ON t.id = s.transaction_id
              WHERE s.category_id = ?1 AND t.date >= ?2 AND t.date < ?3",
             params![category_id, from, to],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
-    Ok(direct + split)
+    Ok(cents_to_dollars(direct + split))
 }
 
 fn row_to_budget(conn: &Connection, row: &Row, period: &str) -> Result<Budget, String> {
@@ -319,7 +315,7 @@ fn row_to_budget(conn: &Connection, row: &Row, period: &str) -> Result<Budget, S
         category_id: category_id.clone(),
         category_name: row.get(2).map_err(db_err)?,
         period: row.get(3).map_err(db_err)?,
-        amount: row.get(4).map_err(db_err)?,
+        amount: cents_to_dollars(row_cents(row, 4).map_err(db_err)?),
         spent,
     })
 }
@@ -349,7 +345,7 @@ fn create_transaction_internal(
             } else {
                 None::<String>
             },
-            input.amount,
+            dollars_to_cents(input.amount),
             input.memo,
             input.cleared as i32,
         ],
@@ -366,7 +362,7 @@ fn create_transaction_internal(
 
 #[tauri::command]
 pub fn init_app(state: State<AppState>) -> Result<AppInitStatus, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.db_unlocked_access()?;
     let db_corrupt = !check_integrity(&conn);
     let unclean_shutdown = detect_unclean_shutdown(&conn)?;
     seed_default_categories(&conn)?;
@@ -401,7 +397,7 @@ pub fn init_app(state: State<AppState>) -> Result<AppInitStatus, String> {
 
 #[tauri::command]
 pub fn mark_clean_shutdown_cmd(state: State<AppState>) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.db_unlocked_access()?;
     mark_clean_shutdown(&conn)
 }
 
@@ -412,7 +408,7 @@ pub fn list_accounts(
     state: State<AppState>,
     include_archived: bool,
 ) -> Result<Vec<Account>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let sql = if include_archived {
         "SELECT id, name, account_type, currency, opening_balance, institution,
                 is_archived, minimum_payment, payment_due_day, created_at
@@ -433,13 +429,13 @@ pub fn list_accounts(
 
 #[tauri::command]
 pub fn get_account(state: State<AppState>, id: String) -> Result<Account, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     get_account_internal(&conn, &id)
 }
 
 #[tauri::command]
 pub fn create_account(state: State<AppState>, input: CreateAccount) -> Result<Account, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     let created_at = now_iso();
     conn.execute(
@@ -452,9 +448,9 @@ pub fn create_account(state: State<AppState>, input: CreateAccount) -> Result<Ac
             input.name,
             input.account_type,
             input.currency,
-            input.opening_balance,
+            dollars_to_cents(input.opening_balance),
             input.institution,
-            input.minimum_payment,
+            input.minimum_payment.map(dollars_to_cents),
             input.payment_due_day,
             created_at,
         ],
@@ -478,7 +474,7 @@ pub fn create_account(state: State<AppState>, input: CreateAccount) -> Result<Ac
                 id,
                 chrono::Utc::now().format("%Y-%m-%d").to_string(),
                 transfer_cat,
-                input.opening_balance,
+                dollars_to_cents(input.opening_balance),
             ],
         )
         .map_err(db_err)?;
@@ -492,7 +488,7 @@ pub fn update_account(
     id: String,
     input: CreateAccount,
 ) -> Result<Account, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
         .execute(
             "UPDATE accounts SET name = ?2, account_type = ?3, currency = ?4,
@@ -503,9 +499,9 @@ pub fn update_account(
                 input.name,
                 input.account_type,
                 input.currency,
-                input.opening_balance,
+                dollars_to_cents(input.opening_balance),
                 input.institution,
-                input.minimum_payment,
+                input.minimum_payment.map(dollars_to_cents),
                 input.payment_due_day,
             ],
         )
@@ -518,7 +514,7 @@ pub fn update_account(
 
 #[tauri::command]
 pub fn delete_account(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let tx_ids: Vec<String> = conn
         .prepare("SELECT id FROM transactions WHERE account_id = ?1")
         .map_err(db_err)?
@@ -552,7 +548,7 @@ pub fn archive_account(
     id: String,
     archived: bool,
 ) -> Result<Account, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
         .execute(
             "UPDATE accounts SET is_archived = ?2 WHERE id = ?1",
@@ -569,7 +565,7 @@ pub fn archive_account(
 
 #[tauri::command]
 pub fn list_categories(state: State<AppState>) -> Result<Vec<Category>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, name, parent_id, category_type, is_tax_related
@@ -600,7 +596,7 @@ pub fn create_category(
     category_type: String,
     is_tax_related: bool,
 ) -> Result<Category, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO categories (id, name, parent_id, category_type, is_tax_related)
@@ -626,7 +622,7 @@ pub fn update_category(
     category_type: String,
     is_tax_related: bool,
 ) -> Result<Category, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
         .execute(
             "UPDATE categories SET name = ?2, parent_id = ?3, category_type = ?4, is_tax_related = ?5
@@ -648,7 +644,7 @@ pub fn update_category(
 
 #[tauri::command]
 pub fn delete_category(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM categories WHERE id = ?1", [&id])
         .map_err(|e| format!("Cannot delete category: {e}"))?;
     Ok(())
@@ -658,7 +654,7 @@ pub fn delete_category(state: State<AppState>, id: String) -> Result<(), String>
 
 #[tauri::command]
 pub fn list_payees(state: State<AppState>) -> Result<Vec<Payee>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare("SELECT id, name, default_category_id FROM payees ORDER BY name")
         .map_err(db_err)?;
@@ -682,7 +678,7 @@ pub fn search_payees(
     query: String,
     limit: i32,
 ) -> Result<Vec<Payee>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let pattern = format!("%{}%", query.to_lowercase());
     let mut stmt = conn
         .prepare(
@@ -710,7 +706,7 @@ pub fn create_payee(
     name: String,
     default_category_id: Option<String>,
 ) -> Result<Payee, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO payees (id, name, default_category_id) VALUES (?1, ?2, ?3)",
@@ -731,7 +727,7 @@ pub fn update_payee(
     name: String,
     default_category_id: Option<String>,
 ) -> Result<Payee, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
         .execute(
             "UPDATE payees SET name = ?2, default_category_id = ?3 WHERE id = ?1",
@@ -750,7 +746,7 @@ pub fn update_payee(
 
 #[tauri::command]
 pub fn delete_payee(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM payees WHERE id = ?1", [&id])
         .map_err(|e| format!("Cannot delete payee: {e}"))?;
     Ok(())
@@ -789,11 +785,11 @@ fn build_tx_filter_parts(filter: &TransactionFilter) -> TxFilterParts {
     }
     if let Some(amount_min) = filter.amount_min {
         where_clause.push_str(" AND t.amount >= ?");
-        params.push(Box::new(amount_min));
+        params.push(Box::new(dollars_to_cents(amount_min)));
     }
     if let Some(amount_max) = filter.amount_max {
         where_clause.push_str(" AND t.amount <= ?");
-        params.push(Box::new(amount_max));
+        params.push(Box::new(dollars_to_cents(amount_max)));
     }
     if let Some(ref memo) = filter.memo {
         where_clause.push_str(" AND lower(t.memo) LIKE ?");
@@ -846,8 +842,10 @@ fn sum_amounts_before_offset(
     params.push(Box::new(offset));
     let params_ref: Vec<&dyn rusqlite::types::ToSql> =
         params.iter().map(|p| p.as_ref()).collect();
-    conn.query_row(&sql, params_ref.as_slice(), |r| r.get(0))
-        .map_err(db_err)
+    let cents: i64 = conn
+        .query_row(&sql, params_ref.as_slice(), |r| row_cents(r, 0))
+        .map_err(db_err)?;
+    Ok(cents_to_dollars(cents))
 }
 
 fn list_transactions_internal(
@@ -886,15 +884,15 @@ fn list_transactions_internal(
         .map_err(db_err)?;
 
     if let Some(ref account_id) = filter.account_id {
-        let opening: f64 = conn
+        let opening_cents: i64 = conn
             .query_row(
                 "SELECT opening_balance FROM accounts WHERE id = ?1",
                 [account_id],
-                |r| r.get(0),
+                |r| row_cents(r, 0),
             )
             .map_err(db_err)?;
         let prior_sum = sum_amounts_before_offset(conn, &filter, filter.offset.unwrap_or(0))?;
-        let mut balance = opening + prior_sum;
+        let mut balance = cents_to_dollars(opening_cents) + prior_sum;
         let mut result = Vec::with_capacity(rows.len());
         for mut tx in rows {
             balance += tx.amount;
@@ -912,7 +910,7 @@ pub fn list_transactions(
     state: State<AppState>,
     filter: TransactionFilter,
 ) -> Result<Vec<Transaction>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     list_transactions_internal(&conn, filter)
 }
 
@@ -921,7 +919,7 @@ pub fn count_transactions(
     state: State<AppState>,
     filter: TransactionFilter,
 ) -> Result<i64, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     count_transactions_internal(&conn, &filter)
 }
 
@@ -933,7 +931,7 @@ pub fn get_account_register(
 ) -> Result<AccountRegister, String> {
     let app = state.app.clone();
     timed_command(&app, "get_account_register", || {
-        let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let conn = state.require_db()?;
         let account = get_account_internal(&conn, &account_id)?;
         let mut tx_filter = filter;
         tx_filter.account_id = Some(account_id.clone());
@@ -968,7 +966,7 @@ pub fn get_account_register(
 
 #[tauri::command]
 pub fn get_transaction(state: State<AppState>, id: String) -> Result<Transaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     get_transaction_internal(&conn, &id)
 }
 
@@ -977,7 +975,7 @@ pub fn create_transaction(
     state: State<AppState>,
     input: CreateTransaction,
 ) -> Result<Transaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     create_transaction_internal(&conn, &input)
 }
 
@@ -987,7 +985,7 @@ pub fn update_transaction(
     id: String,
     input: CreateTransaction,
 ) -> Result<Transaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let payee_id = if let Some(ref name) = input.payee_name {
         Some(ensure_payee(&conn, name).map_err(db_err)?)
     } else {
@@ -1008,7 +1006,7 @@ pub fn update_transaction(
                 } else {
                     None::<String>
                 },
-                input.amount,
+                dollars_to_cents(input.amount),
                 input.memo,
                 input.cleared as i32,
             ],
@@ -1027,7 +1025,7 @@ pub fn update_transaction(
 
 #[tauri::command]
 pub fn delete_transaction(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let transfer_id: Option<String> = conn
         .query_row(
             "SELECT transfer_id FROM transactions WHERE id = ?1",
@@ -1064,7 +1062,7 @@ pub fn bulk_delete_transactions(
     state: State<AppState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     for id in ids {
         let transfer_id: Option<String> = conn
             .query_row(
@@ -1097,7 +1095,7 @@ pub fn bulk_delete_transactions(
 
 #[tauri::command]
 pub fn duplicate_transaction(state: State<AppState>, id: String) -> Result<Transaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let original = get_transaction_internal(&conn, &id)?;
     let splits: Vec<CreateSplit> = original
         .splits
@@ -1143,7 +1141,7 @@ pub fn set_transaction_cleared(
     id: String,
     cleared: bool,
 ) -> Result<Transaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
         .execute(
             "UPDATE transactions SET cleared = ?2 WHERE id = ?1",
@@ -1166,7 +1164,7 @@ pub fn create_transfer(
     if input.from_account_id == input.to_account_id {
         return Err("Cannot transfer to the same account".into());
     }
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let transfer_id = new_id();
     let from_tx_id = new_id();
     let to_tx_id = new_id();
@@ -1227,7 +1225,7 @@ pub fn update_transfer_amount(
     transfer_id: String,
     amount: f64,
 ) -> Result<Vec<Transaction>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let (from_id, to_id): (String, String) = conn
         .query_row(
             "SELECT from_transaction_id, to_transaction_id FROM transfers WHERE id = ?1",
@@ -1237,12 +1235,12 @@ pub fn update_transfer_amount(
         .map_err(|e| format!("Transfer not found: {e}"))?;
     conn.execute(
         "UPDATE transactions SET amount = ?2 WHERE id = ?1",
-        params![from_id, -amount.abs()],
+        params![from_id, -dollars_to_cents(amount.abs())],
     )
     .map_err(db_err)?;
     conn.execute(
         "UPDATE transactions SET amount = ?2 WHERE id = ?1",
-        params![to_id, amount.abs()],
+        params![to_id, dollars_to_cents(amount.abs())],
     )
     .map_err(db_err)?;
     Ok(vec![
@@ -1260,23 +1258,23 @@ pub fn get_reconciliation_status(
     statement_date: String,
     statement_balance: f64,
 ) -> Result<ReconciliationSession, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let opening: f64 = conn
+    let conn = state.require_db()?;
+    let opening_cents: i64 = conn
         .query_row(
             "SELECT opening_balance FROM accounts WHERE id = ?1",
             [&account_id],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
-    let cleared_total: f64 = conn
+    let cleared_cents: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(amount), 0) FROM transactions
              WHERE account_id = ?1 AND cleared = 1 AND date <= ?2",
             params![account_id, statement_date],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
-    let book_balance = opening + cleared_total;
+    let book_balance = cents_to_dollars(opening_cents + cleared_cents);
     Ok(ReconciliationSession {
         account_id,
         statement_date,
@@ -1288,7 +1286,7 @@ pub fn get_reconciliation_status(
 
 #[tauri::command]
 pub fn finish_reconciliation(state: State<AppState>, account_id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute(
         "UPDATE transactions SET reconciled = 1
          WHERE account_id = ?1 AND cleared = 1",
@@ -1302,7 +1300,7 @@ pub fn finish_reconciliation(state: State<AppState>, account_id: String) -> Resu
 
 #[tauri::command]
 pub fn list_budgets(state: State<AppState>, period: String) -> Result<Vec<Budget>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT b.id, b.category_id, c.name, b.period, b.amount
@@ -1327,11 +1325,11 @@ pub fn create_budget(
     period: String,
     amount: f64,
 ) -> Result<Budget, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO budgets (id, category_id, period, amount) VALUES (?1, ?2, ?3, ?4)",
-        params![id, category_id, period, amount],
+        params![id, category_id, period, dollars_to_cents(amount)],
     )
     .map_err(db_err)?;
     let category_name: String = conn
@@ -1359,9 +1357,9 @@ pub fn update_budget(
     id: String,
     amount: f64,
 ) -> Result<Budget, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
-        .execute("UPDATE budgets SET amount = ?2 WHERE id = ?1", params![id, amount])
+        .execute("UPDATE budgets SET amount = ?2 WHERE id = ?1", params![id, dollars_to_cents(amount)])
         .map_err(db_err)?;
     if updated == 0 {
         return Err("Budget not found".into());
@@ -1392,7 +1390,7 @@ pub fn update_budget(
 
 #[tauri::command]
 pub fn delete_budget(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM budgets WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -1402,7 +1400,7 @@ pub fn delete_budget(state: State<AppState>, id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn list_recurring(state: State<AppState>) -> Result<Vec<RecurringTransaction>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, account_id, payee_name, category_id, amount, memo,
@@ -1417,7 +1415,7 @@ pub fn list_recurring(state: State<AppState>) -> Result<Vec<RecurringTransaction
                 account_id: row.get(1)?,
                 payee_name: row.get(2)?,
                 category_id: row.get(3)?,
-                amount: row.get(4)?,
+                amount: cents_to_dollars(row_cents(row, 4)?),
                 memo: row.get(5)?,
                 frequency: row.get(6)?,
                 next_date: row.get(7)?,
@@ -1444,7 +1442,7 @@ pub fn create_recurring(
     auto_enter: bool,
     reminder_days: i32,
 ) -> Result<RecurringTransaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO recurring_transactions
@@ -1455,7 +1453,7 @@ pub fn create_recurring(
             account_id,
             payee_name,
             category_id,
-            amount,
+            dollars_to_cents(amount),
             memo,
             frequency,
             next_date,
@@ -1492,7 +1490,7 @@ pub fn update_recurring(
     auto_enter: bool,
     reminder_days: i32,
 ) -> Result<RecurringTransaction, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let updated = conn
         .execute(
             "UPDATE recurring_transactions SET account_id = ?2, payee_name = ?3, category_id = ?4,
@@ -1503,7 +1501,7 @@ pub fn update_recurring(
                 account_id,
                 payee_name,
                 category_id,
-                amount,
+                dollars_to_cents(amount),
                 memo,
                 frequency,
                 next_date,
@@ -1531,7 +1529,7 @@ pub fn update_recurring(
 
 #[tauri::command]
 pub fn delete_recurring(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM recurring_transactions WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -1542,7 +1540,7 @@ pub fn enter_due_recurring(
     state: State<AppState>,
     ids: Vec<String>,
 ) -> Result<Vec<Transaction>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let today = Utc::now().format("%Y-%m-%d").to_string();
     let mut created = Vec::new();
     for id in ids {
@@ -1558,7 +1556,7 @@ pub fn enter_due_recurring(
                         account_id: row.get(1)?,
                         payee_name: row.get(2)?,
                         category_id: row.get(3)?,
-                        amount: row.get(4)?,
+                        amount: cents_to_dollars(row_cents(row, 4)?),
                         memo: row.get(5)?,
                         frequency: row.get(6)?,
                         next_date: row.get(7)?,
@@ -1598,7 +1596,10 @@ pub fn enter_due_recurring(
 
 #[tauri::command]
 pub fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    if security::is_sensitive_setting_key(&key) {
+        return Ok(None);
+    }
+    let conn = state.require_db()?;
     let val = conn
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -1611,7 +1612,7 @@ pub fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>
 
 #[tauri::command]
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1623,7 +1624,7 @@ pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result
 
 #[tauri::command]
 pub fn get_all_settings(state: State<AppState>) -> Result<HashMap<String, String>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare("SELECT key, value FROM settings")
         .map_err(db_err)?;
@@ -1633,7 +1634,9 @@ pub fn get_all_settings(state: State<AppState>) -> Result<HashMap<String, String
         .map_err(db_err)?;
     for row in rows {
         let (k, v) = row.map_err(db_err)?;
-        map.insert(k, v);
+        if !security::is_sensitive_setting_key(&k) {
+            map.insert(k, v);
+        }
     }
     Ok(map)
 }
@@ -1648,7 +1651,7 @@ pub fn add_attachment(
     mime_type: Option<String>,
 ) -> Result<Attachment, String> {
     validate_file_path(&file_path)?;
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     let path = file_path.clone();
     conn.execute(
@@ -1670,7 +1673,7 @@ pub fn list_attachments(
     state: State<AppState>,
     transaction_id: String,
 ) -> Result<Vec<Attachment>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, transaction_id, file_path, mime_type
@@ -1694,7 +1697,7 @@ pub fn list_attachments(
 
 #[tauri::command]
 pub fn delete_attachment(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM attachments WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -1704,7 +1707,7 @@ pub fn delete_attachment(state: State<AppState>, id: String) -> Result<(), Strin
 
 #[tauri::command]
 pub fn list_tags(state: State<AppState>) -> Result<Vec<Tag>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare("SELECT id, name, color FROM tags ORDER BY name")
         .map_err(db_err)?;
@@ -1728,7 +1731,7 @@ pub fn create_tag(
     name: String,
     color: Option<String>,
 ) -> Result<Tag, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO tags (id, name, color) VALUES (?1, ?2, ?3)",
@@ -1740,7 +1743,7 @@ pub fn create_tag(
 
 #[tauri::command]
 pub fn delete_tag(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM tags WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -1750,7 +1753,7 @@ pub fn delete_tag(state: State<AppState>, id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn list_auto_rules(state: State<AppState>) -> Result<Vec<AutoCategorizeRule>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT r.id, r.pattern, r.category_id, c.name, r.target_field, r.match_type,
@@ -1789,7 +1792,7 @@ pub fn create_auto_rule(
     priority: i32,
     enabled: bool,
 ) -> Result<AutoCategorizeRule, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO auto_categorize_rules
@@ -1819,7 +1822,7 @@ pub fn create_auto_rule(
 
 #[tauri::command]
 pub fn delete_auto_rule(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM auto_categorize_rules WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -1892,7 +1895,7 @@ fn apply_auto_rules_internal(conn: &Connection, overwrite: bool) -> Result<i64, 
 pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool) -> Result<i64, String> {
     let app = state.app.clone();
     timed_command(&app, "apply_auto_rules_to_transactions", || {
-        let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let conn = state.require_db()?;
         apply_auto_rules_internal(&conn, overwrite)
     })
 }
@@ -1901,7 +1904,7 @@ pub fn apply_auto_rules_to_transactions(state: State<AppState>, overwrite: bool)
 
 #[tauri::command]
 pub fn list_saved_filters(state: State<AppState>) -> Result<Vec<SavedFilter>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare("SELECT id, name, account_id, filter_json FROM saved_filters ORDER BY name")
         .map_err(db_err)?;
@@ -1927,7 +1930,7 @@ pub fn create_saved_filter(
     account_id: Option<String>,
     filter_json: String,
 ) -> Result<SavedFilter, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO saved_filters (id, name, account_id, filter_json) VALUES (?1, ?2, ?3, ?4)",
@@ -1944,7 +1947,7 @@ pub fn create_saved_filter(
 
 #[tauri::command]
 pub fn delete_saved_filter(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM saved_filters WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -1954,7 +1957,7 @@ pub fn delete_saved_filter(state: State<AppState>, id: String) -> Result<(), Str
 
 #[tauri::command]
 pub fn list_templates(state: State<AppState>) -> Result<Vec<TransactionTemplate>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, name, payee_name, category_id, amount, memo
@@ -1968,7 +1971,7 @@ pub fn list_templates(state: State<AppState>) -> Result<Vec<TransactionTemplate>
                 name: row.get(1)?,
                 payee_name: row.get(2)?,
                 category_id: row.get(3)?,
-                amount: row.get(4)?,
+                amount: row_cents_opt(row, 4)?.map(cents_to_dollars),
                 memo: row.get(5)?,
             })
         })
@@ -1987,12 +1990,19 @@ pub fn create_template(
     amount: Option<f64>,
     memo: Option<String>,
 ) -> Result<TransactionTemplate, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let id = new_id();
     conn.execute(
         "INSERT INTO transaction_templates (id, name, payee_name, category_id, amount, memo)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, name, payee_name, category_id, amount, memo],
+        params![
+            id,
+            name,
+            payee_name,
+            category_id,
+            amount.map(dollars_to_cents),
+            memo
+        ],
     )
     .map_err(db_err)?;
     Ok(TransactionTemplate {
@@ -2007,7 +2017,7 @@ pub fn create_template(
 
 #[tauri::command]
 pub fn delete_template(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM transaction_templates WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -2020,7 +2030,7 @@ pub fn list_holdings(
     state: State<AppState>,
     account_id: String,
 ) -> Result<Vec<InvestmentHolding>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, account_id, symbol, shares, cost_basis, current_price
@@ -2034,8 +2044,8 @@ pub fn list_holdings(
                 account_id: row.get(1)?,
                 symbol: row.get(2)?,
                 shares: row.get(3)?,
-                cost_basis: row.get(4)?,
-                current_price: row.get(5)?,
+                cost_basis: cents_to_dollars(row_cents(row, 4)?),
+                current_price: row_cents_opt(row, 5)?.map(cents_to_dollars),
             })
         })
         .map_err(db_err)?
@@ -2053,7 +2063,7 @@ pub fn upsert_holding(
     cost_basis: f64,
     current_price: Option<f64>,
 ) -> Result<InvestmentHolding, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let existing: Option<String> = conn
         .query_row(
             "SELECT id FROM investment_holdings WHERE account_id = ?1 AND symbol = ?2",
@@ -2065,7 +2075,13 @@ pub fn upsert_holding(
         conn.execute(
             "UPDATE investment_holdings SET shares = ?3, cost_basis = ?4, current_price = ?5
              WHERE account_id = ?1 AND symbol = ?2",
-            params![account_id, symbol, shares, cost_basis, current_price],
+            params![
+                account_id,
+                symbol,
+                shares,
+                dollars_to_cents(cost_basis),
+                current_price.map(dollars_to_cents)
+            ],
         )
         .map_err(db_err)?;
         existing_id
@@ -2074,7 +2090,14 @@ pub fn upsert_holding(
         conn.execute(
             "INSERT INTO investment_holdings (id, account_id, symbol, shares, cost_basis, current_price)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![new_id, account_id, symbol, shares, cost_basis, current_price],
+            params![
+                new_id,
+                account_id,
+                symbol,
+                shares,
+                dollars_to_cents(cost_basis),
+                current_price.map(dollars_to_cents)
+            ],
         )
         .map_err(db_err)?;
         new_id
@@ -2091,7 +2114,7 @@ pub fn upsert_holding(
 
 #[tauri::command]
 pub fn delete_holding(state: State<AppState>, id: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute("DELETE FROM investment_holdings WHERE id = ?1", [&id])
         .map_err(db_err)?;
     Ok(())
@@ -2104,7 +2127,7 @@ pub fn get_loan_details(
     state: State<AppState>,
     account_id: String,
 ) -> Result<Option<LoanDetails>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let result = conn.query_row(
         "SELECT account_id, principal, interest_rate, term_months, start_date
          FROM loan_details WHERE account_id = ?1",
@@ -2112,7 +2135,7 @@ pub fn get_loan_details(
         |row| {
             Ok(LoanDetails {
                 account_id: row.get(0)?,
-                principal: row.get(1)?,
+                principal: cents_to_dollars(row_cents(row, 1)?),
                 interest_rate: row.get(2)?,
                 term_months: row.get(3)?,
                 start_date: row.get(4)?,
@@ -2131,7 +2154,7 @@ pub fn set_loan_details(
     state: State<AppState>,
     details: LoanDetails,
 ) -> Result<LoanDetails, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     conn.execute(
         "INSERT INTO loan_details (account_id, principal, interest_rate, term_months, start_date)
          VALUES (?1, ?2, ?3, ?4, ?5)
@@ -2142,7 +2165,7 @@ pub fn set_loan_details(
            start_date = excluded.start_date",
         params![
             details.account_id,
-            details.principal,
+            dollars_to_cents(details.principal),
             details.interest_rate,
             details.term_months,
             details.start_date,
@@ -2157,14 +2180,15 @@ pub fn calculate_loan_payment(
     state: State<AppState>,
     account_id: String,
 ) -> Result<f64, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let (principal, interest_rate, term_months): (f64, f64, i32) = conn
+    let conn = state.require_db()?;
+    let (principal_cents, interest_rate, term_months): (i64, f64, i32) = conn
         .query_row(
             "SELECT principal, interest_rate, term_months FROM loan_details WHERE account_id = ?1",
             [&account_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((row_cents(r, 0)?, r.get(1)?, r.get(2)?)),
         )
         .map_err(|e| format!("Loan details not found: {e}"))?;
+    let principal = cents_to_dollars(principal_cents);
     let n = term_months as f64;
     if n <= 0.0 {
         return Err("Invalid loan term".into());
@@ -2181,7 +2205,7 @@ pub fn calculate_loan_payment(
 
 #[tauri::command]
 pub fn list_exchange_rates(state: State<AppState>) -> Result<Vec<ExchangeRate>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, from_currency, to_currency, rate, effective_date
@@ -2212,7 +2236,7 @@ pub fn set_exchange_rate(
     rate: f64,
     date: String,
 ) -> Result<ExchangeRate, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let existing: Option<String> = conn
         .query_row(
             "SELECT id FROM exchange_rates
@@ -2263,7 +2287,7 @@ fn current_month_bounds() -> (String, String) {
 
 #[tauri::command]
 pub fn get_dashboard_summary(state: State<AppState>) -> Result<DashboardSummary, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let account_ids: Vec<String> = conn
         .prepare("SELECT id FROM accounts WHERE is_archived = 0")
         .map_err(db_err)?
@@ -2276,17 +2300,17 @@ pub fn get_dashboard_summary(state: State<AppState>) -> Result<DashboardSummary,
         net_worth += account_balance(&conn, aid)?;
     }
     let (month_start, month_end) = current_month_bounds();
-    let monthly_income: f64 = conn
+    let monthly_income_cents: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t
              LEFT JOIN categories c ON c.id = t.category_id
              WHERE t.date >= ?1 AND t.date < ?2 AND t.amount > 0
              AND (c.category_type = 'income' OR c.id IS NULL)",
             params![month_start, month_end],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
-    let monthly_spending: f64 = conn
+    let monthly_spending_cents: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0)
              FROM transactions t
@@ -2294,9 +2318,11 @@ pub fn get_dashboard_summary(state: State<AppState>) -> Result<DashboardSummary,
              WHERE t.date >= ?1 AND t.date < ?2
              AND (c.category_type = 'expense' OR c.id IS NULL)",
             params![month_start, month_end],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
+    let monthly_income = cents_to_dollars(monthly_income_cents);
+    let monthly_spending = cents_to_dollars(monthly_spending_cents);
     let mut recent_stmt = conn
         .prepare(
             "SELECT t.id, t.account_id, t.date, t.payee_id, p.name, t.category_id, c.name,
@@ -2329,7 +2355,7 @@ pub fn get_dashboard_summary(state: State<AppState>) -> Result<DashboardSummary,
                 account_id: row.get(1)?,
                 payee_name: row.get(2)?,
                 category_id: row.get(3)?,
-                amount: row.get(4)?,
+                amount: cents_to_dollars(row_cents(row, 4)?),
                 memo: row.get(5)?,
                 frequency: row.get(6)?,
                 next_date: row.get(7)?,
@@ -2373,7 +2399,7 @@ pub fn get_spending_by_category(
     date_from: String,
     date_to: String,
 ) -> Result<Vec<CategorySpending>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT c.id, c.name,
@@ -2397,7 +2423,7 @@ pub fn get_spending_by_category(
             Ok(CategorySpending {
                 category_id: row.get(0)?,
                 category_name: row.get(1)?,
-                amount: row.get(2)?,
+                amount: cents_to_dollars(row_cents(row, 2)?),
             })
         })
         .map_err(db_err)?
@@ -2411,7 +2437,7 @@ pub fn get_income_vs_expense(
     state: State<AppState>,
     months: i32,
 ) -> Result<Vec<MonthlyFlow>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut flows = Vec::new();
     for i in (0..months).rev() {
         let d = Utc::now()
@@ -2420,17 +2446,17 @@ pub fn get_income_vs_expense(
             .unwrap_or_else(|| Utc::now().date_naive());
         let label = format!("{}-{:02}", d.year(), d.month());
         let (from, to) = period_range(&label)?;
-        let income: f64 = conn
+        let income_cents: i64 = conn
             .query_row(
                 "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t
                  LEFT JOIN categories c ON c.id = t.category_id
                  WHERE t.date >= ?1 AND t.date < ?2 AND t.amount > 0
                  AND (c.category_type = 'income' OR c.id IS NULL)",
                 params![from, to],
-                |r| r.get(0),
+                |r| row_cents(r, 0),
             )
             .map_err(db_err)?;
-        let expenses: f64 = conn
+        let expenses_cents: i64 = conn
             .query_row(
                 "SELECT COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0)
                  FROM transactions t
@@ -2438,13 +2464,13 @@ pub fn get_income_vs_expense(
                  WHERE t.date >= ?1 AND t.date < ?2
                  AND (c.category_type = 'expense' OR c.id IS NULL)",
                 params![from, to],
-                |r| r.get(0),
+                |r| row_cents(r, 0),
             )
             .map_err(db_err)?;
         flows.push(MonthlyFlow {
             month: label,
-            income,
-            expenses,
+            income: cents_to_dollars(income_cents),
+            expenses: cents_to_dollars(expenses_cents),
         });
     }
     Ok(flows)
@@ -2456,7 +2482,7 @@ pub fn get_cash_flow(
     date_from: String,
     date_to: String,
 ) -> Result<Vec<MonthlyFlow>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut stmt = conn
         .prepare(
             "SELECT substr(date, 1, 7) AS month,
@@ -2471,8 +2497,8 @@ pub fn get_cash_flow(
         .query_map(params![date_from, date_to], |row| {
             Ok(MonthlyFlow {
                 month: row.get(0)?,
-                income: row.get(1)?,
-                expenses: row.get(2)?,
+                income: cents_to_dollars(row_cents(row, 1)?),
+                expenses: cents_to_dollars(row_cents(row, 2)?),
             })
         })
         .map_err(db_err)?
@@ -2487,12 +2513,12 @@ pub fn get_balance_history(
     account_id: String,
     months: i32,
 ) -> Result<Vec<BalancePoint>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let opening: f64 = conn
+    let conn = state.require_db()?;
+    let opening_cents: i64 = conn
         .query_row(
             "SELECT opening_balance FROM accounts WHERE id = ?1",
             [&account_id],
-            |r| r.get(0),
+            |r| row_cents(r, 0),
         )
         .map_err(db_err)?;
     let mut points = Vec::new();
@@ -2513,17 +2539,17 @@ pub fn get_balance_history(
                 .format("%Y-%m-%d")
                 .to_string()
         };
-        let tx_sum: f64 = conn
+        let tx_sum_cents: i64 = conn
             .query_row(
                 "SELECT COALESCE(SUM(amount), 0) FROM transactions
                  WHERE account_id = ?1 AND date <= ?2",
                 params![account_id, end_of_month],
-                |r| r.get(0),
+                |r| row_cents(r, 0),
             )
             .map_err(db_err)?;
         points.push(BalancePoint {
             date: end_of_month,
-            balance: opening + tx_sum,
+            balance: cents_to_dollars(opening_cents + tx_sum_cents),
         });
     }
     Ok(points)
@@ -2534,7 +2560,7 @@ pub fn get_net_worth_history(
     state: State<AppState>,
     months: i32,
 ) -> Result<Vec<BalancePoint>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let account_ids: Vec<String> = conn
         .prepare("SELECT id FROM accounts WHERE is_archived = 0")
         .map_err(db_err)?
@@ -2560,25 +2586,26 @@ pub fn get_net_worth_history(
                 .format("%Y-%m-%d")
                 .to_string()
         };
-        let mut total = 0.0;
+        let mut total_cents = 0i64;
         for aid in &account_ids {
-            let opening: f64 = conn
+            let opening_cents: i64 = conn
                 .query_row(
                     "SELECT opening_balance FROM accounts WHERE id = ?1",
                     [aid],
-                    |r| r.get(0),
+                    |r| row_cents(r, 0),
                 )
                 .map_err(db_err)?;
-            let tx_sum: f64 = conn
+            let tx_sum_cents: i64 = conn
                 .query_row(
                     "SELECT COALESCE(SUM(amount), 0) FROM transactions
                      WHERE account_id = ?1 AND date <= ?2",
                     params![aid, end_of_month],
-                    |r| r.get(0),
+                    |r| row_cents(r, 0),
                 )
                 .map_err(db_err)?;
-            total += opening + tx_sum;
+            total_cents += opening_cents + tx_sum_cents;
         }
+        let total = cents_to_dollars(total_cents);
         points.push(BalancePoint {
             date: end_of_month,
             balance: total,
@@ -2589,7 +2616,7 @@ pub fn get_net_worth_history(
 
 #[tauri::command]
 pub fn get_tax_summary(state: State<AppState>, year: i32) -> Result<Vec<TaxSummaryRow>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let from = format!("{year}-01-01");
     let to = format!("{year}-12-31");
     let mut stmt = conn
@@ -2614,7 +2641,7 @@ pub fn get_tax_summary(state: State<AppState>, year: i32) -> Result<Vec<TaxSumma
         .query_map(params![from, to], |row| {
             Ok(TaxSummaryRow {
                 category_name: row.get(0)?,
-                amount: row.get(1)?,
+                amount: cents_to_dollars(row_cents(row, 1)?),
             })
         })
         .map_err(db_err)?
@@ -2697,7 +2724,7 @@ pub fn export_transactions_csv(
     state: State<AppState>,
     account_id: Option<String>,
 ) -> Result<String, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut sql = String::from(
         "SELECT t.date, t.amount, p.name, t.memo, c.name, t.cleared, t.reconciled
          FROM transactions t
@@ -2745,7 +2772,7 @@ pub fn export_transactions_csv(
 
 #[tauri::command]
 pub fn export_accounts_csv(state: State<AppState>) -> Result<String, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut csv = String::from("name,type,currency,opening_balance,institution,archived\n");
     let mut stmt = conn
         .prepare(
@@ -2782,7 +2809,7 @@ pub fn export_accounts_csv(state: State<AppState>) -> Result<String, String> {
 
 #[tauri::command]
 pub fn export_categories_csv(state: State<AppState>) -> Result<String, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let mut csv = String::from("name,type,parent,tax_related\n");
     let mut stmt = conn
         .prepare(
@@ -2821,7 +2848,7 @@ pub fn preview_csv_import(
     csv_content: String,
     account_id: String,
 ) -> Result<ImportPreview, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let rows = parse_csv_content(&csv_content);
     build_import_preview(&conn, &account_id, rows)
 }
@@ -2834,7 +2861,7 @@ pub fn commit_csv_import(
 ) -> Result<i32, String> {
     let app = state.app.clone();
     timed_command(&app, "commit_csv_import", || {
-        let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let conn = state.require_db()?;
         commit_import_rows(&conn, &account_id, &rows)
     })
 }
@@ -2845,7 +2872,7 @@ pub fn preview_qif_import(
     qif_content: String,
     account_id: String,
 ) -> Result<ImportPreview, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let rows = parse_qif_content(&qif_content);
     build_import_preview(&conn, &account_id, rows)
 }
@@ -2856,7 +2883,7 @@ pub fn commit_qif_import(
     qif_content: String,
     account_id: String,
 ) -> Result<i32, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let rows = parse_qif_content(&qif_content);
     commit_import_rows(&conn, &account_id, &rows)
 }
@@ -2867,7 +2894,7 @@ pub fn preview_ofx_import(
     ofx_content: String,
     account_id: String,
 ) -> Result<ImportPreview, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let rows = parse_ofx_content(&ofx_content);
     build_import_preview(&conn, &account_id, rows)
 }
@@ -2878,7 +2905,7 @@ pub fn commit_ofx_import(
     ofx_content: String,
     account_id: String,
 ) -> Result<i32, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.require_db()?;
     let rows = parse_ofx_content(&ofx_content);
     commit_import_rows(&conn, &account_id, &rows)
 }
@@ -2886,22 +2913,29 @@ pub fn commit_ofx_import(
 // ── BACKUP ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn backup_database(app: tauri::AppHandle, dest_path: String) -> Result<(), String> {
-    timed_command(&app, "backup_database", || {
+pub fn backup_database(state: State<AppState>, dest_path: String) -> Result<(), String> {
+    let _conn = state.require_db()?;
+    timed_command(&state.app, "backup_database", || {
         let dest = validate_file_path(&dest_path)?;
-        let src = crate::db::db_path(&app)?;
-        crate::db::backup_database_file(&src, &dest)?;
-        log::info!("Database backed up to {}", dest.display());
+        let src = crate::db::db_path(&state.app)?;
+        if crate::db::is_encryption_enabled(&src) {
+            crate::db::backup_database_file_encrypted(&src, &dest)?;
+            log::info!("Encrypted database backed up to {}", dest.display());
+        } else {
+            crate::db::backup_database_file(&src, &dest)?;
+            log::info!("Database backed up to {}", dest.display());
+        }
         Ok(())
     })
 }
 
 #[tauri::command]
-pub fn restore_database(app: tauri::AppHandle, src_path: String) -> Result<(), String> {
+pub fn restore_database(state: State<AppState>, src_path: String) -> Result<(), String> {
+    let _conn = state.require_db()?;
     let src = validate_file_path(&src_path)?;
-    let dest = crate::db::db_path(&app)?;
-    crate::db::restore_database_file(&src, &dest)?;
-    log::warn!("Database restored from {}", src.display());
+    let dest = crate::db::db_path(&state.app)?;
+    crate::db::restore_database_file_maybe_encrypted(&src, &dest)?;
+    log::warn!("Database restored from {} — restart the app to reopen", src.display());
     Ok(())
 }
 
@@ -2926,7 +2960,7 @@ pub fn read_frontend_log_tail(app: AppHandle, max_lines: Option<usize>) -> Resul
 
 #[tauri::command]
 pub fn get_diagnostic_snapshot(state: State<AppState>, app: AppHandle) -> Result<DiagnosticSnapshot, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
+    let conn = state.db_unlocked_access()?;
     let schema_version: i32 = conn
         .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
         .map_err(db_err)?;
@@ -2953,90 +2987,6 @@ pub fn get_diagnostic_snapshot(state: State<AppState>, app: AppHandle) -> Result
     })
 }
 
-// ── SECURITY ──────────────────────────────────────────────────────────────────
-
-const MASTER_HASH_KEY: &str = "master_password_hash";
-const MASTER_SALT_KEY: &str = "master_password_salt";
-
-fn verify_password_internal(conn: &Connection, password: &str) -> Result<bool, String> {
-    let hash: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [MASTER_HASH_KEY],
-            |r| r.get(0),
-        )
-        .ok();
-    let salt: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [MASTER_SALT_KEY],
-            |r| r.get(0),
-        )
-        .ok();
-    match (hash, salt) {
-        (Some(stored), Some(salt)) => Ok(hash_password(password, &salt) == stored),
-        _ => Ok(false),
-    }
-}
-
-#[tauri::command]
-pub fn set_master_password(state: State<AppState>, password: String) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let salt = new_id();
-    let hash = hash_password(&password, &salt);
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![MASTER_SALT_KEY, salt],
-    )
-    .map_err(db_err)?;
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![MASTER_HASH_KEY, hash],
-    )
-    .map_err(db_err)?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn has_master_password(state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    let exists: i32 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM settings WHERE key = ?1",
-            [MASTER_HASH_KEY],
-            |r| r.get(0),
-        )
-        .map_err(db_err)?;
-    Ok(exists > 0)
-}
-
-#[tauri::command]
-pub fn lock_app(state: State<AppState>) -> Result<(), String> {
-    let mut locked = state.is_locked.lock().map_err(|e| format!("Lock error: {e}"))?;
-    *locked = true;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn unlock_app(state: State<AppState>, password: String) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(|e| format!("Lock error: {e}"))?;
-    if !verify_password_internal(&conn, &password)? {
-        return Ok(false);
-    }
-    drop(conn);
-    let mut locked = state.is_locked.lock().map_err(|e| format!("Lock error: {e}"))?;
-    *locked = false;
-    Ok(true)
-}
-
-#[tauri::command]
-pub fn is_app_locked(state: State<AppState>) -> Result<bool, String> {
-    let locked = state.is_locked.lock().map_err(|e| format!("Lock error: {e}"))?;
-    Ok(*locked)
-}
-
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -3046,7 +2996,7 @@ mod integration_tests {
         let id = new_id();
         conn.execute(
             "INSERT INTO accounts (id, name, account_type, currency, opening_balance, is_archived, created_at)
-             VALUES (?1, 'Test', 'checking', 'USD', 100.0, 0, '2024-01-01')",
+             VALUES (?1, 'Test', 'checking', 'USD', 10000, 0, '2024-01-01')",
             [&id],
         )
         .unwrap();
@@ -3072,7 +3022,7 @@ mod integration_tests {
         assert!((tx.amount + 25.0).abs() < 0.01);
 
         conn.execute(
-            "UPDATE transactions SET amount = -30.0, memo = 'Updated' WHERE id = ?1",
+            "UPDATE transactions SET amount = -3000, memo = 'Updated' WHERE id = ?1",
             [&tx.id],
         )
         .unwrap();
@@ -3098,13 +3048,13 @@ mod integration_tests {
         let to_tx = new_id();
         conn.execute(
             "INSERT INTO transactions (id, account_id, date, amount, cleared, reconciled, transfer_id)
-             VALUES (?1, ?2, '2024-03-01', -50.0, 0, 0, ?3)",
+             VALUES (?1, ?2, '2024-03-01', -5000, 0, 0, ?3)",
             params![from_tx, from_id, transfer_id],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO transactions (id, account_id, date, amount, cleared, reconciled, transfer_id)
-             VALUES (?1, ?2, '2024-03-01', 50.0, 0, 0, ?3)",
+             VALUES (?1, ?2, '2024-03-01', 5000, 0, 0, ?3)",
             params![to_tx, to_id, transfer_id],
         )
         .unwrap();
@@ -3216,7 +3166,7 @@ mod integration_tests {
         .unwrap();
         conn.execute(
             "INSERT INTO transactions (id, account_id, date, payee_id, amount, cleared, reconciled)
-             VALUES (?1, ?2, '2024-06-01', ?3, -5.0, 0, 0)",
+             VALUES (?1, ?2, '2024-06-01', ?3, -500, 0, 0)",
             params![tx_id, account_id, payee_id],
         )
         .unwrap();
@@ -3250,7 +3200,7 @@ mod integration_tests {
         let tx_id = new_id();
         conn.execute(
             "INSERT INTO transactions (id, account_id, date, amount, memo, cleared, reconciled)
-             VALUES (?1, ?2, '2024-06-02', 100.0, 'Travel reimbursement', 0, 0)",
+             VALUES (?1, ?2, '2024-06-02', 10000, 'Travel reimbursement', 0, 0)",
             params![tx_id, account_id],
         )
         .unwrap();
@@ -3259,10 +3209,18 @@ mod integration_tests {
 
     #[test]
     fn master_password_verify_round_trip() {
+        use crate::commands::security::verify_password_internal;
+        use crate::crypto::{
+            hash_password_argon2, hash_password_sha256_legacy, ALGO_ARGON2, MASTER_HASH_KEY,
+            MASTER_SALT_KEY, PASSWORD_ALGO_KEY,
+        };
+
         let conn = open_test_connection();
         assert!(!verify_password_internal(&conn, "secret").unwrap());
+
+        // Legacy SHA-256 path + transparent upgrade
         let salt = new_id();
-        let hash = hash_password("secret", &salt);
+        let hash = hash_password_sha256_legacy("secret", &salt);
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)",
             params![MASTER_SALT_KEY, salt],
@@ -3275,6 +3233,34 @@ mod integration_tests {
         .unwrap();
         assert!(verify_password_internal(&conn, "secret").unwrap());
         assert!(!verify_password_internal(&conn, "wrong").unwrap());
+
+        // After successful verify, hash should be upgraded to Argon2
+        let algo: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                [PASSWORD_ALGO_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(algo, ALGO_ARGON2);
+
+        // Fresh Argon2 path
+        let conn2 = open_test_connection();
+        let phc = hash_password_argon2("secret").unwrap();
+        conn2
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                params![MASTER_HASH_KEY, phc],
+            )
+            .unwrap();
+        conn2
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                params![PASSWORD_ALGO_KEY, ALGO_ARGON2],
+            )
+            .unwrap();
+        assert!(verify_password_internal(&conn2, "secret").unwrap());
+        assert!(!verify_password_internal(&conn2, "wrong").unwrap());
     }
 
     #[test]
@@ -3339,7 +3325,7 @@ mod integration_tests {
         for i in 0..10_000 {
             conn.execute(
                 "INSERT INTO transactions (id, account_id, date, amount, cleared, reconciled)
-                 VALUES (?1, ?2, ?3, -1.0, 0, 0)",
+                 VALUES (?1, ?2, ?3, -100, 0, 0)",
                 params![format!("tx-{i}"), account_id, format!("2024-01-{:02}", (i % 28) + 1)],
             )
             .unwrap();
