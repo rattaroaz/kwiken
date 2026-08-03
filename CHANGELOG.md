@@ -4,6 +4,15 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-08-03
+
+### Fixed
+
+- Transfer creation stored dollar amounts instead of cents (balances were off by 100×).
+- Transaction and account CSV exports wrote raw cents; re-import would amplify by 100×.
+- Account creation double-counted opening balance (field + synthetic transaction); migration `004` removes legacy Opening Balance rows.
+- Category/tax spending reports counted positive split amounts inconsistently with budget spent.
+
 ## [2.7.0] - 2026-08-03
 
 ### Added
@@ -158,7 +167,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.7.1...HEAD
+[2.7.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.1
 [2.7.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.0
 [2.6.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.6.0
 [2.2.4]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.4

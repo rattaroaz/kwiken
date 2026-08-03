@@ -5,7 +5,7 @@ import type { DiagnosticReport } from "./diagnostics";
 const sampleReport: DiagnosticReport = {
   generated_at: "2026-07-04T12:00:00.000Z",
   snapshot: {
-    app_version: "2.7.0",
+    app_version: "2.7.1",
     schema_version: 2,
     db_ready: true,
     db_corrupt: false,

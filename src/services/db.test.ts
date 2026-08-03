@@ -183,7 +183,7 @@ describe("db service", () => {
     await db.appendFrontendLog('{"message":"test"}');
     expect(mockedInvoke).toHaveBeenCalledWith("append_frontend_log", { line: '{"message":"test"}' });
     mockedInvoke.mockResolvedValueOnce({
-      app_version: "2.7.0",
+      app_version: "2.7.1",
       schema_version: 2,
       db_ready: true,
       db_corrupt: false,

@@ -456,29 +456,9 @@ pub fn create_account(state: State<AppState>, input: CreateAccount) -> Result<Ac
         ],
     )
     .map_err(db_err)?;
-    if input.opening_balance != 0.0 {
-        let tx_id = new_id();
-        let transfer_cat: Option<String> = conn
-            .query_row(
-                "SELECT id FROM categories WHERE name = 'Transfer' LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .ok();
-        conn.execute(
-            "INSERT INTO transactions
-             (id, account_id, date, payee_id, category_id, amount, memo, cleared, reconciled, transfer_id)
-             VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'Opening Balance', 1, 0, NULL)",
-            params![
-                tx_id,
-                id,
-                chrono::Utc::now().format("%Y-%m-%d").to_string(),
-                transfer_cat,
-                dollars_to_cents(input.opening_balance),
-            ],
-        )
-        .map_err(db_err)?;
-    }
+    // Opening balance lives only on the account row. Balance math is
+    // opening_balance + SUM(transactions); do not also insert a duplicate
+    // "Opening Balance" transaction (that previously double-counted).
     get_account_internal(&conn, &id)
 }
 
@@ -1156,15 +1136,13 @@ pub fn set_transaction_cleared(
 
 // ── TRANSFERS ─────────────────────────────────────────────────────────────────
 
-#[tauri::command]
-pub fn create_transfer(
-    state: State<AppState>,
-    input: CreateTransfer,
+fn create_transfer_internal(
+    conn: &Connection,
+    input: &CreateTransfer,
 ) -> Result<Vec<Transaction>, String> {
     if input.from_account_id == input.to_account_id {
         return Err("Cannot transfer to the same account".into());
     }
-    let conn = state.require_db()?;
     let transfer_id = new_id();
     let from_tx_id = new_id();
     let to_tx_id = new_id();
@@ -1175,6 +1153,7 @@ pub fn create_transfer(
             |r| r.get(0),
         )
         .ok();
+    let amount_cents = dollars_to_cents(input.amount.abs());
     conn.execute(
         "INSERT INTO transactions
          (id, account_id, date, payee_id, category_id, amount, memo, cleared, reconciled, transfer_id)
@@ -1184,7 +1163,7 @@ pub fn create_transfer(
             input.from_account_id,
             input.date,
             transfer_cat,
-            -input.amount.abs(),
+            -amount_cents,
             input.memo,
             input.cleared as i32,
             transfer_id,
@@ -1200,7 +1179,7 @@ pub fn create_transfer(
             input.to_account_id,
             input.date,
             transfer_cat,
-            input.amount.abs(),
+            amount_cents,
             input.memo,
             input.cleared as i32,
             transfer_id,
@@ -1214,9 +1193,18 @@ pub fn create_transfer(
     )
     .map_err(db_err)?;
     Ok(vec![
-        get_transaction_internal(&conn, &from_tx_id)?,
-        get_transaction_internal(&conn, &to_tx_id)?,
+        get_transaction_internal(conn, &from_tx_id)?,
+        get_transaction_internal(conn, &to_tx_id)?,
     ])
+}
+
+#[tauri::command]
+pub fn create_transfer(
+    state: State<AppState>,
+    input: CreateTransfer,
+) -> Result<Vec<Transaction>, String> {
+    let conn = state.require_db()?;
+    create_transfer_internal(&conn, &input)
 }
 
 #[tauri::command]
@@ -2405,7 +2393,7 @@ pub fn get_spending_by_category(
             "SELECT c.id, c.name,
                     COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0)
                     + COALESCE((
-                        SELECT SUM(CASE WHEN s.amount < 0 THEN -s.amount ELSE s.amount END)
+                        SELECT SUM(CASE WHEN s.amount < 0 THEN -s.amount ELSE 0 END)
                         FROM transaction_splits s
                         INNER JOIN transactions t2 ON t2.id = s.transaction_id
                         WHERE s.category_id = c.id AND t2.date >= ?1 AND t2.date <= ?2
@@ -2624,7 +2612,7 @@ pub fn get_tax_summary(state: State<AppState>, year: i32) -> Result<Vec<TaxSumma
             "SELECT c.name,
                     COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0)
                     + COALESCE((
-                        SELECT SUM(CASE WHEN s.amount < 0 THEN -s.amount ELSE s.amount END)
+                        SELECT SUM(CASE WHEN s.amount < 0 THEN -s.amount ELSE 0 END)
                         FROM transaction_splits s
                         INNER JOIN transactions t2 ON t2.id = s.transaction_id
                         WHERE s.category_id = c.id AND t2.date >= ?1 AND t2.date <= ?2
@@ -2719,12 +2707,10 @@ fn commit_import_rows(
     Ok(count)
 }
 
-#[tauri::command]
-pub fn export_transactions_csv(
-    state: State<AppState>,
-    account_id: Option<String>,
+fn export_transactions_csv_internal(
+    conn: &Connection,
+    account_id: Option<&str>,
 ) -> Result<String, String> {
-    let conn = state.require_db()?;
     let mut sql = String::from(
         "SELECT t.date, t.amount, p.name, t.memo, c.name, t.cleared, t.reconciled
          FROM transactions t
@@ -2732,9 +2718,9 @@ pub fn export_transactions_csv(
          LEFT JOIN categories c ON t.category_id = c.id",
     );
     let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    if let Some(ref aid) = account_id {
+    if let Some(aid) = account_id {
         sql.push_str(" WHERE t.account_id = ?");
-        params_vec.push(Box::new(aid.clone()));
+        params_vec.push(Box::new(aid.to_string()));
     }
     sql.push_str(" ORDER BY t.date, t.id");
     let params_ref: Vec<&dyn rusqlite::types::ToSql> =
@@ -2745,7 +2731,7 @@ pub fn export_transactions_csv(
         .query_map(params_ref.as_slice(), |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, f64>(1)?,
+                cents_to_dollars(row_cents(row, 1)?),
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
@@ -2757,7 +2743,7 @@ pub fn export_transactions_csv(
     for row in rows {
         let (date, amount, payee, memo, category, cleared, reconciled) = row.map_err(db_err)?;
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{}\n",
+            "{},{:.2},{},{},{},{},{}\n",
             escape_csv(&date),
             amount,
             escape_csv(&payee.unwrap_or_default()),
@@ -2768,6 +2754,15 @@ pub fn export_transactions_csv(
         ));
     }
     Ok(csv)
+}
+
+#[tauri::command]
+pub fn export_transactions_csv(
+    state: State<AppState>,
+    account_id: Option<String>,
+) -> Result<String, String> {
+    let conn = state.require_db()?;
+    export_transactions_csv_internal(&conn, account_id.as_deref())
 }
 
 #[tauri::command]
@@ -2786,7 +2781,7 @@ pub fn export_accounts_csv(state: State<AppState>) -> Result<String, String> {
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, f64>(3)?,
+                cents_to_dollars(row_cents(row, 3)?),
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, i32>(5)?,
             ))
@@ -2795,7 +2790,7 @@ pub fn export_accounts_csv(state: State<AppState>) -> Result<String, String> {
     for row in rows {
         let (name, atype, currency, opening, institution, archived) = row.map_err(db_err)?;
         csv.push_str(&format!(
-            "{},{},{},{},{},{}\n",
+            "{},{},{},{:.2},{},{}\n",
             escape_csv(&name),
             escape_csv(&atype),
             escape_csv(&currency),
@@ -3067,6 +3062,83 @@ mod integration_tests {
         let to_bal = account_balance(&conn, &to_id).unwrap();
         assert!((from_bal - 50.0).abs() < 0.01);
         assert!((to_bal - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn create_transfer_stores_cents_not_dollars() {
+        let conn = open_test_connection();
+        let from_id = create_test_account(&conn);
+        let to_id = create_test_account(&conn);
+        let txs = create_transfer_internal(
+            &conn,
+            &CreateTransfer {
+                from_account_id: from_id.clone(),
+                to_account_id: to_id.clone(),
+                date: "2024-03-15".into(),
+                amount: 50.0,
+                memo: Some("Move".into()),
+                cleared: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(txs.len(), 2);
+        assert!((txs[0].amount + 50.0).abs() < 0.01);
+        assert!((txs[1].amount - 50.0).abs() < 0.01);
+        assert!((account_balance(&conn, &from_id).unwrap() - 50.0).abs() < 0.01);
+        assert!((account_balance(&conn, &to_id).unwrap() - 150.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn export_transactions_csv_uses_dollar_amounts() {
+        let conn = open_test_connection();
+        let account_id = create_test_account(&conn);
+        create_transaction_internal(
+            &conn,
+            &CreateTransaction {
+                account_id: account_id.clone(),
+                date: "2024-04-10".into(),
+                payee_name: Some("Store".into()),
+                category_id: None,
+                amount: -25.5,
+                memo: None,
+                cleared: false,
+                splits: vec![],
+                tag_ids: vec![],
+            },
+        )
+        .unwrap();
+        let csv = export_transactions_csv_internal(&conn, Some(&account_id)).unwrap();
+        assert!(
+            csv.contains("-25.50"),
+            "expected dollar amount in CSV, got:\n{csv}"
+        );
+        assert!(
+            !csv.contains("-2550"),
+            "raw cents must not appear in CSV export:\n{csv}"
+        );
+    }
+
+    #[test]
+    fn opening_balance_is_not_double_counted() {
+        let conn = open_test_connection();
+        let id = new_id();
+        conn.execute(
+            "INSERT INTO accounts (id, name, account_type, currency, opening_balance, is_archived, created_at)
+             VALUES (?1, 'Checking', 'checking', 'USD', 25000, 0, '2024-01-01')",
+            [&id],
+        )
+        .unwrap();
+        // Legacy bug path: synthetic Opening Balance tx matching opening_balance.
+        // Migration 004 deletes these; ensure balance uses opening alone when no txs.
+        assert!((account_balance(&conn, &id).unwrap() - 250.0).abs() < 0.01);
+        let tx_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE account_id = ?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tx_count, 0);
     }
 
     #[test]

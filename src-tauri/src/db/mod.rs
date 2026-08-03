@@ -189,6 +189,20 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
         UPDATE loan_details SET principal = ROUND(principal * 100);
         "#,
     ),
+    (
+        "004_fix_opening_balance_double_count",
+        r#"
+        -- Older create_account inserted both accounts.opening_balance and an
+        -- "Opening Balance" transaction for the same amount. Balance math is
+        -- opening + SUM(tx), so those accounts were double-counted. Remove the
+        -- synthetic transaction; keep the account opening_balance field.
+        DELETE FROM transactions
+        WHERE memo = 'Opening Balance'
+          AND payee_id IS NULL
+          AND transfer_id IS NULL
+          AND cleared = 1;
+        "#,
+    ),
 ];
 
 pub fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -603,7 +617,7 @@ mod tests {
             let conn = open_connection_at_path(&live).expect("open live db");
             conn.execute(
                 "INSERT INTO accounts (id, name, account_type, currency, opening_balance, is_archived, created_at)
-                 VALUES ('acct-1', 'Backup Test', 'checking', 'USD', 500.0, 0, '2024-01-01')",
+                 VALUES ('acct-1', 'Backup Test', 'checking', 'USD', 50000, 0, '2024-01-01')",
                 [],
             )
             .expect("seed account");
@@ -660,6 +674,48 @@ mod tests {
     }
 
     #[test]
+    fn migration_removes_duplicate_opening_balance_transactions() {
+        let path = std::env::temp_dir().join(format!("kwiken-migrate-ob-{}.db", new_id()));
+        {
+            let conn = Connection::open(&path).expect("open");
+            conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+            // Apply through money-cents migration only.
+            for (i, (_, sql)) in MIGRATIONS.iter().enumerate().take(3) {
+                conn.execute_batch(sql).unwrap();
+                conn.execute("UPDATE schema_version SET version = ?1", [(i + 1) as i32])
+                    .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO accounts (id, name, account_type, currency, opening_balance, is_archived, created_at)
+                 VALUES ('a1', 'Checking', 'checking', 'USD', 10000, 0, '2024-01-01')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transactions (id, account_id, date, amount, memo, cleared, reconciled)
+                 VALUES ('t1', 'a1', '2024-01-01', 10000, 'Opening Balance', 1, 0)",
+                [],
+            )
+            .unwrap();
+            // Pre-fix: opening + tx = $200
+            assert_eq!(crate::db::account_balance(&conn, "a1").unwrap(), 200.0);
+        }
+        {
+            let conn = open_connection_at_path(&path).expect("run 004");
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM transactions WHERE memo = 'Opening Balance'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0);
+            assert!((crate::db::account_balance(&conn, "a1").unwrap() - 100.0).abs() < 0.01);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn migration_v1_to_v2_preserves_auto_rules() {
         let path = std::env::temp_dir().join(format!("kwiken-migrate-v2-{}.db", new_id()));
         let rule_id = new_id();
@@ -686,7 +742,7 @@ mod tests {
             let version: i32 = conn
                 .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
                 .expect("schema version");
-            assert_eq!(version, 3);
+            assert_eq!(version, 4);
             let (pattern, cat, target_field, match_type, priority, enabled): (
                 String,
                 String,
