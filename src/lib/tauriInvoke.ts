@@ -19,12 +19,17 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && !!getInternals()?.invoke;
 }
 
+function isTestOrE2E(): boolean {
+  return import.meta.env.MODE === "test" || import.meta.env.VITE_E2E === "true";
+}
+
 /**
  * Wait briefly for the Tauri IPC bridge. Needed if the page evaluates before
  * injection finishes, and to fail clearly when opened in a normal browser.
+ * Skipped in Vitest / E2E mocks (they stub `@tauri-apps/api/core` instead).
  */
 export async function waitForTauri(timeoutMs = 3000): Promise<void> {
-  if (isTauriRuntime()) return;
+  if (isTestOrE2E() || isTauriRuntime()) return;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     await new Promise((r) => setTimeout(r, 50));
@@ -36,7 +41,9 @@ export async function waitForTauri(timeoutMs = 3000): Promise<void> {
 }
 
 export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  await waitForTauri();
+  if (!isTestOrE2E()) {
+    await waitForTauri();
+  }
   const run = ipcChain.then(
     () => tauriInvoke<T>(cmd, args),
     () => tauriInvoke<T>(cmd, args),
