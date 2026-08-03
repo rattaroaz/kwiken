@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@/lib/tauriInvoke";
 import type { LogEntry } from "@/lib/logger";
 
 let enabled = import.meta.env.MODE !== "test";

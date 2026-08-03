@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { db } from "@/services/db";
 import { logger } from "@/lib/logger";
 import { initObservability, isSaveLogsToDiskEnabled } from "@/lib/observability";
+import { setLogFileEnabled } from "@/lib/logFile";
+import { waitForTauri } from "@/lib/tauriInvoke";
 import { DEFAULT_SETTINGS } from "@/lib/constants";
 import { useDataStore, useSecurityStore, useUiStore } from "@/stores/index";
 import type { Theme } from "@/shared/types";
@@ -33,6 +35,9 @@ function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", isDark);
 }
 
+/** Prevent overlapping init invoke chains (Strict Mode / HMR remount). */
+let appInitInFlight: Promise<void> | null = null;
+
 export default function App() {
   const initialized = useDataStore((s) => s.initialized);
   const hasAccounts = useDataStore((s) => s.hasAccounts);
@@ -47,77 +52,104 @@ export default function App() {
   const isLocked = useSecurityStore((s) => s.isLocked);
   const [dbCorrupt, setDbCorrupt] = useState(false);
   const [uncleanShutdown, setUncleanShutdown] = useState(false);
+  const [notInTauri, setNotInTauri] = useState(false);
 
   useAutoBackup();
   useIdleLock();
 
   useEffect(() => {
-    async function init() {
-      if (import.meta.env.VITE_E2E === "true") {
-        const forceSetup = sessionStorage.getItem("e2e-force-setup") === "1";
-        if (forceSetup) {
-          setInitialized(true, false);
+    if (useDataStore.getState().initialized) return;
+
+    if (!appInitInFlight) {
+      appInitInFlight = (async () => {
+        // Keep disk log IPC off until all startup invokes finish.
+        setLogFileEnabled(false);
+
+        if (import.meta.env.VITE_E2E !== "true") {
+          try {
+            await waitForTauri();
+          } catch {
+            setNotInTauri(true);
+            setInitialized(true, false);
+            return;
+          }
+        }
+
+        if (import.meta.env.VITE_E2E === "true") {
+          const forceSetup = sessionStorage.getItem("e2e-force-setup") === "1";
+          if (forceSetup) {
+            setInitialized(true, false);
+            return;
+          }
+          const status = await db.initApp();
+          const settings = await db.getAllSettings();
+          const merged = { ...DEFAULT_SETTINGS, ...settings };
+          setSettings(merged);
+          await initObservability({
+            saveLogsToDisk: isSaveLogsToDiskEnabled(merged),
+            schemaVersion: status.schema_version,
+            hasAccounts: status.has_accounts,
+          });
+          setTheme((merged.theme ?? "system") as Theme);
+          applyTheme((merged.theme ?? "system") as Theme);
+          const hasPw = await db.hasMasterPassword();
+          setHasMasterPassword(hasPw);
+          const locked = await db.isAppLocked();
+          setLocked(locked);
+          setInitialized(true, status.has_accounts);
           return;
         }
-        const status = await db.initApp();
-        const settings = await db.getAllSettings();
-        setSettings({ ...DEFAULT_SETTINGS, ...settings });
-        await initObservability({
-          saveLogsToDisk: isSaveLogsToDiskEnabled({ ...DEFAULT_SETTINGS, ...settings }),
-          schemaVersion: status.schema_version,
-          hasAccounts: status.has_accounts,
-        });
-        setTheme((settings.theme ?? "system") as Theme);
-        applyTheme((settings.theme ?? "system") as Theme);
-        const hasPw = await db.hasMasterPassword();
-        setHasMasterPassword(hasPw);
-        const locked = await db.isAppLocked();
-        setLocked(locked);
-        setInitialized(true, status.has_accounts);
-        return;
-      }
-      try {
-        const status = await db.initApp();
-        if (status.db_corrupt) {
-          logger.app.error("Database integrity check failed", { schemaVersion: status.schema_version });
-          setDbCorrupt(true);
+
+        try {
+          const status = await db.initApp();
+          if (status.db_corrupt) {
+            console.error("Database integrity check failed", status.schema_version);
+            setDbCorrupt(true);
+            setInitialized(true, false);
+            return;
+          }
+
+          const settings = await db.getAllSettings();
+          const merged = { ...DEFAULT_SETTINGS, ...settings };
+          setSettings(merged);
+
+          const themeValue = (merged.theme ?? "system") as Theme;
+          setTheme(themeValue);
+          applyTheme(themeValue);
+          if (String(merged.privacy_mode) === "true") setPrivacyMode(true);
+
+          const hasPw = await db.hasMasterPassword();
+          setHasMasterPassword(hasPw);
+          const locked = await db.isAppLocked();
+          setLocked(locked);
+
+          // Enable disk logging only after the critical invoke chain finishes.
+          await initObservability({
+            saveLogsToDisk: isSaveLogsToDiskEnabled(merged),
+            schemaVersion: status.schema_version,
+            hasAccounts: status.has_accounts,
+          });
+
+          setInitialized(true, status.has_accounts);
+          if (status.unclean_shutdown) {
+            setUncleanShutdown(true);
+          }
+          logger.app.info("App initialized", { hasAccounts: status.has_accounts });
+        } catch (e) {
+          console.error("Init failed", e);
+          setLogFileEnabled(isSaveLogsToDiskEnabled(DEFAULT_SETTINGS));
+          addToast("error", e instanceof Error ? e.message : "Failed to initialize app");
           setInitialized(true, false);
-          return;
         }
-        if (status.unclean_shutdown) {
-          logger.app.warn("Unclean shutdown detected from previous session");
-          setUncleanShutdown(true);
+      })().finally(() => {
+        // Allow a later remount to re-run only if init never marked initialized.
+        if (!useDataStore.getState().initialized) {
+          appInitInFlight = null;
         }
-        const settings = await db.getAllSettings();
-        const merged = { ...DEFAULT_SETTINGS, ...settings };
-        setSettings(merged);
-        await initObservability({
-          saveLogsToDisk: isSaveLogsToDiskEnabled(merged),
-          schemaVersion: status.schema_version,
-          hasAccounts: status.has_accounts,
-        });
-
-        const themeValue = (merged.theme ?? "system") as Theme;
-        setTheme(themeValue);
-        applyTheme(themeValue);
-
-        if (String(merged.privacy_mode) === "true") setPrivacyMode(true);
-
-        const hasPw = await db.hasMasterPassword();
-        setHasMasterPassword(hasPw);
-
-        const locked = await db.isAppLocked();
-        setLocked(locked);
-
-        setInitialized(true, status.has_accounts);
-        logger.app.info("App initialized", { hasAccounts: status.has_accounts });
-      } catch (e) {
-        logger.app.error("Init failed", { error: String(e) });
-        addToast("error", e instanceof Error ? e.message : "Failed to initialize app");
-        setInitialized(true, false);
-      }
+      });
     }
-    init();
+
+    void appInitInFlight;
   }, [setInitialized, setSettings, setTheme, setHasMasterPassword, setLocked, setPrivacyMode, addToast]);
 
   useEffect(() => {
@@ -137,23 +169,45 @@ export default function App() {
     };
     window.addEventListener("beforeunload", markClean);
     return () => {
-      markClean();
       window.removeEventListener("beforeunload", markClean);
     };
   }, []);
 
   useEffect(() => {
-    if (uncleanShutdown) {
+    if (uncleanShutdown && initialized) {
+      logger.app.warn("Unclean shutdown detected from previous session");
       logger.app.info("Displayed unclean shutdown recovery notice");
-      addToast("info", "Kwiken recovered from an unexpected shutdown. Recent data should be intact.");
+      // Only show when the previous session really crashed — not every dev restart.
+      addToast(
+        "info",
+        "Kwiken recovered from an unexpected shutdown. Recent data should be intact.",
+      );
       setUncleanShutdown(false);
     }
-  }, [uncleanShutdown, addToast]);
+  }, [uncleanShutdown, initialized, addToast]);
 
   if (!initialized) {
     return (
       <div className="flex h-full items-center justify-center p-8">
         <LoadingSkeleton rows={3} className="w-64" />
+      </div>
+    );
+  }
+
+  if (notInTauri) {
+    return (
+      <div className="flex h-full items-center justify-center p-8" data-testid="not-in-tauri">
+        <div className="max-w-md space-y-3 text-center">
+          <h1 className="text-xl font-semibold">Open the Kwiken desktop window</h1>
+          <p className="text-sm text-muted-foreground">
+            This page is running in a normal browser, where Tauri{" "}
+            <code className="text-xs">invoke</code> is unavailable. Start the app with:
+          </p>
+          <pre className="rounded-md bg-muted px-3 py-2 text-left text-sm">npm run tauri dev</pre>
+          <p className="text-sm text-muted-foreground">
+            Then use the Kwiken window that opens — not the Vite URL at localhost:1420.
+          </p>
+        </div>
       </div>
     );
   }

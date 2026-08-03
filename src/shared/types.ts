@@ -36,7 +36,7 @@ export interface Payee {
   default_category_id?: string;
 }
 
-export interface TransactionSplit {
+interface TransactionSplit {
   id: string;
   transaction_id: string;
   category_id?: string;

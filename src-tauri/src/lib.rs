@@ -9,9 +9,9 @@ mod money;
 mod parsers;
 mod state;
 
-use db::{has_master_password_hash, open_connection};
+use db::{has_master_password_hash, mark_clean_shutdown, open_connection};
 use state::AppState;
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
 
 fn init_logging() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
@@ -136,6 +136,19 @@ pub fn run() {
             commands::read_frontend_log_tail,
             commands::get_diagnostic_snapshot,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Ok(conn) = state.db_unlocked_access() {
+                        if let Err(e) = mark_clean_shutdown(&conn) {
+                            log::warn!("Could not mark clean shutdown on exit: {e}");
+                        } else {
+                            log::info!("Marked clean shutdown");
+                        }
+                    }
+                }
+            }
+        });
 }

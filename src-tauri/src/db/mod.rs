@@ -227,16 +227,6 @@ pub fn write_encryption_marker(db_path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Could not write encryption marker: {e}"))
 }
 
-#[allow(dead_code)]
-pub fn remove_encryption_marker(db_path: &Path) -> Result<(), String> {
-    let marker = encryption_marker_path(db_path);
-    if marker.exists() {
-        std::fs::remove_file(&marker)
-            .map_err(|e| format!("Could not remove encryption marker: {e}"))?;
-    }
-    Ok(())
-}
-
 pub fn open_connection(app: &AppHandle) -> Result<Connection, String> {
     let path = db_path(app)?;
     open_connection_at_path(&path)
@@ -306,15 +296,6 @@ pub fn backup_database_file(source: &Path, dest: &Path) -> Result<(), String> {
         .map_err(|e| format!("Backup failed: {e}"))
 }
 
-pub fn restore_database_file(source: &Path, dest: &Path) -> Result<(), String> {
-    if !source.exists() {
-        return Err("Source database file not found".into());
-    }
-    std::fs::copy(source, dest)
-        .map(|_| ())
-        .map_err(|e| format!("Restore failed: {e}"))
-}
-
 pub fn check_integrity(conn: &Connection) -> bool {
     conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
         .map(|result| result == "ok")
@@ -323,7 +304,8 @@ pub fn check_integrity(conn: &Connection) -> bool {
 
 const SHUTDOWN_KEY: &str = "last_shutdown_clean";
 
-pub fn detect_unclean_shutdown(conn: &Connection) -> Result<bool, String> {
+/// Read-only check — does not mutate the shutdown flag.
+pub fn peek_unclean_shutdown(conn: &Connection) -> bool {
     let was_clean: Option<String> = conn
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -331,7 +313,12 @@ pub fn detect_unclean_shutdown(conn: &Connection) -> Result<bool, String> {
             |r| r.get(0),
         )
         .ok();
-    let unclean = was_clean.as_deref() == Some("false");
+    was_clean.as_deref() == Some("false")
+}
+
+/// Detect unclean previous session and mark this session as in-progress.
+pub fn detect_unclean_shutdown(conn: &Connection) -> Result<bool, String> {
+    let unclean = peek_unclean_shutdown(conn);
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, 'false')
          ON CONFLICT(key) DO UPDATE SET value = 'false'",
@@ -626,7 +613,7 @@ mod tests {
         backup_database_file(&live, &backup).expect("backup");
         assert!(backup.exists());
 
-        restore_database_file(&backup, &restored).expect("restore");
+        restore_database_file_maybe_encrypted(&backup, &restored).expect("restore");
         let conn = Connection::open(&restored).expect("open restored");
         let name: String = conn
             .query_row("SELECT name FROM accounts WHERE id = 'acct-1'", [], |r| r.get(0))

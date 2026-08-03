@@ -1,4 +1,4 @@
-export type SemverTuple = [number, number, number];
+type SemverTuple = [number, number, number];
 
 export function parseSemver(version: string): SemverTuple | null {
   let v = version.trim();

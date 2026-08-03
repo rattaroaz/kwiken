@@ -57,7 +57,3 @@ export function formatDiagnosticReportText(report: DiagnosticReport): string {
   ];
   return lines.join("\n");
 }
-
-export function formatDiagnosticReportJson(report: DiagnosticReport): string {
-  return JSON.stringify(report, null, 2);
-}

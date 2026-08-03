@@ -75,6 +75,7 @@ function log(category: LogCategory, level: LogLevel, message: string, metadata?:
   };
 
   useLogStore.getState().addEntry(entry);
+  // Serialize through logFile's IPC queue; still non-blocking for callers.
   void appendLogEntryToFile(entry);
 
   const prefix = `[${entry.category}]`;
@@ -154,9 +155,24 @@ export async function withTiming<T>(
 }
 
 export function formatDbError(error: unknown): string {
-  const msg = error instanceof Error ? error.message : String(error);
+  let msg: string;
+  if (error instanceof Error) {
+    msg = error.message;
+  } else if (typeof error === "string") {
+    msg = error;
+  } else if (error && typeof error === "object" && "message" in error) {
+    msg = String((error as { message: unknown }).message);
+  } else {
+    try {
+      msg = JSON.stringify(error);
+    } catch {
+      msg = String(error);
+    }
+  }
   if (msg.includes("UNIQUE constraint")) return "A record with that name already exists.";
   if (msg.includes("FOREIGN KEY constraint")) return "This item is linked to other records and cannot be removed.";
-  if (msg.includes("not found")) return "The requested record was not found.";
+  if (msg.includes("not found") && !msg.toLowerCase().includes("invoke")) {
+    return "The requested record was not found.";
+  }
   return msg || "An unexpected database error occurred.";
 }

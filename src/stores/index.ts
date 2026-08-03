@@ -45,10 +45,15 @@ export const useUiStore = create<UiState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
-  addToast: (type, message) =>
+  addToast: (type, message) => {
+    // Capture toast text so startup/IPC failures are visible in the log file.
+    if (type === "error" || type === "info") {
+      console.warn(`[toast:${type}]`, message);
+    }
     set((s) => ({
       toasts: [...s.toasts, { id: crypto.randomUUID(), type, message }],
-    })),
+    }));
+  },
   removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   showConfirm: (title, message, onConfirm) =>
     set({ confirm: { open: true, title, message, onConfirm } }),

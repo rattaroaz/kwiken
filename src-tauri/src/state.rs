@@ -1,3 +1,4 @@
+use crate::models::AppInitStatus;
 use rusqlite::Connection;
 use std::sync::{Mutex, MutexGuard};
 use tauri::AppHandle;
@@ -5,6 +6,8 @@ use tauri::AppHandle;
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub is_locked: Mutex<bool>,
+    /// Cached result of the first `init_app` in this process (HMR/remount safe).
+    pub init_status: Mutex<Option<AppInitStatus>>,
     pub app: AppHandle,
 }
 
@@ -13,6 +16,7 @@ impl AppState {
         Self {
             db: Mutex::new(conn),
             is_locked: Mutex::new(start_locked),
+            init_status: Mutex::new(None),
             app,
         }
     }

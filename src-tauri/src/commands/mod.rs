@@ -2,6 +2,7 @@ pub mod security;
 
 use crate::db::{
     account_balance, apply_auto_category, auto_rule_matches, check_integrity, detect_unclean_shutdown,
+    peek_unclean_shutdown,
     ensure_payee, mark_clean_shutdown, new_id, now_iso, seed_default_categories,
     validate_file_path,
 };
@@ -362,37 +363,57 @@ fn create_transaction_internal(
 
 #[tauri::command]
 pub fn init_app(state: State<AppState>) -> Result<AppInitStatus, String> {
-    let conn = state.db_unlocked_access()?;
-    let db_corrupt = !check_integrity(&conn);
-    let unclean_shutdown = detect_unclean_shutdown(&conn)?;
-    seed_default_categories(&conn)?;
-    let has_accounts: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts LIMIT 1)",
-            [],
-            |r| r.get::<_, i32>(0),
-        )
-        .map_err(db_err)?
-        != 0;
-    let schema_version: i32 = conn
-        .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
-        .map_err(db_err)?;
-    if db_corrupt {
-        log::error!("Database integrity check failed (schema v{schema_version})");
-    } else if unclean_shutdown {
-        log::warn!("Unclean shutdown detected from previous session");
-    } else {
-        log::info!(
-            "App initialized: has_accounts={has_accounts}, schema_version={schema_version}"
-        );
+    // HMR / remount can call this more than once; only the first call should
+    // mutate the unclean-shutdown flag or re-seed.
+    {
+        let cached = state
+            .init_status
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        if let Some(status) = cached.clone() {
+            log::debug!("init_app reused cached status");
+            return Ok(status);
+        }
     }
-    Ok(AppInitStatus {
-        db_ready: !db_corrupt,
-        has_accounts,
-        schema_version,
-        db_corrupt,
-        unclean_shutdown,
-    })
+
+    let status = {
+        let conn = state.db_unlocked_access()?;
+        let db_corrupt = !check_integrity(&conn);
+        let unclean_shutdown = detect_unclean_shutdown(&conn)?;
+        seed_default_categories(&conn)?;
+        let has_accounts: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM accounts LIMIT 1)",
+                [],
+                |r| r.get::<_, i32>(0),
+            )
+            .map_err(db_err)?
+            != 0;
+        let schema_version: i32 = conn
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
+            .map_err(db_err)?;
+        if db_corrupt {
+            log::error!("Database integrity check failed (schema v{schema_version})");
+        } else if unclean_shutdown {
+            log::warn!("Unclean shutdown detected from previous session");
+        } else {
+            log::info!(
+                "App initialized: has_accounts={has_accounts}, schema_version={schema_version}"
+            );
+        }
+        AppInitStatus {
+            db_ready: !db_corrupt,
+            has_accounts,
+            schema_version,
+            db_corrupt,
+            unclean_shutdown,
+        }
+    };
+    *state
+        .init_status
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))? = Some(status.clone());
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1587,7 +1608,8 @@ pub fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>
     if security::is_sensitive_setting_key(&key) {
         return Ok(None);
     }
-    let conn = state.require_db()?;
+    // Readable while locked (theme / lock-screen preferences).
+    let conn = state.db_unlocked_access()?;
     let val = conn
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
@@ -1612,7 +1634,8 @@ pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result
 
 #[tauri::command]
 pub fn get_all_settings(state: State<AppState>) -> Result<HashMap<String, String>, String> {
-    let conn = state.require_db()?;
+    // Readable while locked (theme / lock-screen preferences).
+    let conn = state.db_unlocked_access()?;
     let mut stmt = conn
         .prepare("SELECT key, value FROM settings")
         .map_err(db_err)?;
@@ -2960,7 +2983,8 @@ pub fn get_diagnostic_snapshot(state: State<AppState>, app: AppHandle) -> Result
         .query_row("SELECT version FROM schema_version LIMIT 1", [], |r| r.get(0))
         .map_err(db_err)?;
     let db_corrupt = !check_integrity(&conn);
-    let unclean_shutdown = detect_unclean_shutdown(&conn)?;
+    // Read-only — must not consume/mutate the session unclean flag.
+    let unclean_shutdown = peek_unclean_shutdown(&conn);
     let account_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM accounts", [], |r| r.get(0))
         .map_err(db_err)?;

@@ -3,7 +3,7 @@ import type { LogCategory, LogEntry, LogLevel } from "@/lib/logger";
 
 const MAX_LOGS = 500;
 
-export type LogLevelFilter = LogLevel | "all";
+type LogLevelFilter = LogLevel | "all";
 
 interface LogState {
   entries: LogEntry[];

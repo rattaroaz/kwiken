@@ -57,7 +57,7 @@ describe("db service", () => {
 
   it("wraps invoke errors with formatted message", async () => {
     mockedInvoke.mockRejectedValueOnce("database locked");
-    await expect(db.listAccounts()).rejects.toThrow("database locked");
+    await expect(db.listAccounts()).rejects.toThrow("list_accounts: database locked");
   });
 
   it("calls account CRUD commands", async () => {
@@ -183,7 +183,7 @@ describe("db service", () => {
     await db.appendFrontendLog('{"message":"test"}');
     expect(mockedInvoke).toHaveBeenCalledWith("append_frontend_log", { line: '{"message":"test"}' });
     mockedInvoke.mockResolvedValueOnce({
-      app_version: "2.7.1",
+      app_version: "2.7.2",
       schema_version: 2,
       db_ready: true,
       db_corrupt: false,

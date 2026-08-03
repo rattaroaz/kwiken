@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { logger, formatDbError, withTiming } from "@/lib/logger";
+import { invoke } from "@/lib/tauriInvoke";
+import { formatDbError, withTiming } from "@/lib/logger";
 import type {
   Account,
   AccountRegister,
@@ -37,8 +37,11 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   try {
     return await invoke<T>(cmd, args);
   } catch (e) {
-    logger.db.error(`Command ${cmd} failed`, { error: String(e) });
-    throw new Error(formatDbError(e));
+    // Use console only — logger.db.error would invoke append_frontend_log and can
+    // deadlock the IPC bridge when the original invoke already failed/stalled.
+    const detail = formatDbError(e);
+    console.error(`[db] Command ${cmd} failed:`, detail, e);
+    throw new Error(`${cmd}: ${detail}`);
   }
 }
 
