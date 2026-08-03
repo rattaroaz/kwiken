@@ -89,11 +89,11 @@ describe("session context", () => {
   });
 
   it("attaches session metadata to log entries", () => {
-    initLogSession({ session_id: "sess-1", app_version: "2.6.0" });
+    initLogSession({ session_id: "sess-1", app_version: "2.7.0" });
     logger.app.info("started");
     const entry = useLogStore.getState().entries[0];
     expect(entry.metadata?.session_id).toBe("sess-1");
-    expect(entry.metadata?.app_version).toBe("2.6.0");
+    expect(entry.metadata?.app_version).toBe("2.7.0");
     expect(getLogSessionContext().session_id).toBe("sess-1");
   });
 });

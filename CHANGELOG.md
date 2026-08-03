@@ -4,6 +4,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-08-03
+
 ### Added
 
 - Backend lock enforcement: data commands require an unlocked session when a master password is set.
@@ -156,7 +158,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.0
 [2.6.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.6.0
 [2.2.4]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.4
 [2.2.3]: https://github.com/rattaroaz/kwiken/releases/tag/v2.2.3

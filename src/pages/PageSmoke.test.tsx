@@ -176,8 +176,8 @@ const mocks = vi.hoisted(() => {
       appendFrontendLog: vi.fn(async () => undefined),
       readFrontendLogTail: vi.fn(async () => []),
       getDiagnosticSnapshot: vi.fn(async () => ({
-        app_version: "2.6.0",
-        schema_version: 2,
+        app_version: "2.7.0",
+        schema_version: 3,
         db_ready: true,
         db_corrupt: false,
         unclean_shutdown: false,
