@@ -120,10 +120,13 @@ function seedDefaultData(target: E2EStore) {
     is_archived: false,
     created_at: "2024-01-01T00:00:00Z",
   });
+  // Keep within ReportsPage's default range (last ~30 days → today).
+  const recent = new Date();
+  recent.setDate(recent.getDate() - 7);
   target.transactions.push({
     id: "e2e-tx-1",
     account_id: accountId,
-    date: "2026-06-15",
+    date: recent.toISOString().slice(0, 10),
     amount: -42.5,
     payee_name: "Grocery",
     category_name: "Groceries",
