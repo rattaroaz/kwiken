@@ -506,7 +506,7 @@ export async function invoke<T>(cmd: string, args?: Json): Promise<T> {
 
     case "get_diagnostic_snapshot":
       return {
-        app_version: "2.7.2",
+        app_version: "2.7.3",
         schema_version: 1,
         db_ready: true,
         db_corrupt: false,

@@ -4,6 +4,13 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 
 ## [Unreleased]
 
+## [2.7.3] - 2026-08-04
+
+### Fixed
+
+- Vitest suite no longer waits for the Tauri bridge (`waitForTauri` skipped in test/E2E modes).
+- E2E spending report seed transaction date kept within the default last-30-days range.
+
 ## [2.7.2] - 2026-08-03
 
 ### Fixed
@@ -180,7 +187,8 @@ All notable changes to Kwiken are documented here. Version numbers follow [Seman
 - Master password, auto-lock, and privacy mode.
 - Light/dark theme, command palette, and keyboard shortcuts.
 
-[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.7.2...HEAD
+[Unreleased]: https://github.com/rattaroaz/kwiken/compare/v2.7.3...HEAD
+[2.7.3]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.3
 [2.7.2]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.2
 [2.7.1]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.1
 [2.7.0]: https://github.com/rattaroaz/kwiken/releases/tag/v2.7.0
